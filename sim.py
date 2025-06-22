@@ -31,9 +31,26 @@ class SimulationParams:
     
     # Agent parameters
     N: int = 10000        # Number of agents
-    rho_min: float = 0.02 # Min hurdle rate (2%)
-    rho_max: float = 0.15 # Max hurdle rate (15%)
-    lambda_max: float = 0.02  # Max illiquidity cost (2%)
+    
+    # Market sentiment distribution (percentages must sum to 100%)
+    bearish_pct: float = 0.3    # 30% bearish agents
+    neutral_pct: float = 0.5    # 50% neutral agents  
+    bullish_pct: float = 0.2    # 20% bullish agents
+    
+    # Bearish agent characteristics
+    bearish_hurdle_rate: float = 0.15      # 15% hurdle rate (very risk averse)
+    bearish_illiquidity_cost: float = 0.03 # 3% illiquidity cost (hate being locked up)
+    bearish_price_expectation: float = -0.3 # -30% annual price expectation
+    
+    # Neutral agent characteristics  
+    neutral_hurdle_rate: float = 0.08      # 8% hurdle rate (moderate)
+    neutral_illiquidity_cost: float = 0.015 # 1.5% illiquidity cost (moderate)
+    neutral_price_expectation: float = 0.0  # 0% annual price expectation
+    
+    # Bullish agent characteristics
+    bullish_hurdle_rate: float = 0.03      # 3% hurdle rate (risk seeking)
+    bullish_illiquidity_cost: float = 0.005 # 0.5% illiquidity cost (don't mind locks)
+    bullish_price_expectation: float = 0.5  # 50% annual price expectation
     
     # Performance parameters
     fast_mode: bool = False  # NEW: Enable fast mode optimizations
@@ -57,9 +74,12 @@ class SimulationParams:
     C0: float = 1e9       # Initial circulating supply
     
     # Price model parameters (GBM)
-    price_scenario: str = "neutral"  # "bearish", "neutral", "bullish"
-    initial_price: float = 1.0       # Starting token price
+    initial_price: float = 0.1       # Starting token price
     staking_price_impact: float = 0.1  # How much staking affects price (0.1 = 10% max impact)
+    
+    # Market scenario parameters (GBM)
+    market_drift: float = 0.0        # Annual price drift (0 = neutral, +0.5 = 50% bull, -0.3 = 30% bear)
+    market_volatility: float = 0.3   # Annual price volatility (0.3 = 30%)
     
     def __post_init__(self):
         if self.multipliers is None:
@@ -91,20 +111,48 @@ class DPoSSimulation:
         self.setup_tracking()
         
     def setup_agents(self):
-        """Initialize agent parameters"""
+        """Initialize agent characteristics based on market sentiment distribution"""
         np.random.seed(42)  # For reproducibility
         
-        # Agent hurdle rates
-        self.rho = np.random.uniform(
-            self.params.rho_min, 
-            self.params.rho_max, 
-            self.params.N
-        )
-        self.delta = (1 + self.rho) ** (1/self.params.E) - 1
+        # Validate sentiment percentages sum to 1.0
+        total_pct = self.params.bearish_pct + self.params.neutral_pct + self.params.bullish_pct
+        if abs(total_pct - 1.0) > 0.001:
+            raise ValueError(f"Sentiment percentages must sum to 1.0, got {total_pct}")
         
-        # Agent sentiment (0=bearish, 1=bullish)
-        self.sentiment = np.random.uniform(0, 1, self.params.N)
-        self.lambda_agent = self.params.lambda_max * (1 - self.sentiment)
+        # Determine agent types based on percentages
+        n_bearish = int(self.params.N * self.params.bearish_pct)
+        n_neutral = int(self.params.N * self.params.neutral_pct)
+        n_bullish = self.params.N - n_bearish - n_neutral  # Ensure exact total
+        
+        # Create agent type assignments
+        agent_types = (['bearish'] * n_bearish + 
+                      ['neutral'] * n_neutral + 
+                      ['bullish'] * n_bullish)
+        np.random.shuffle(agent_types)  # Randomize order
+        self.agent_types = np.array(agent_types)
+        
+        # Initialize arrays for agent characteristics
+        self.rho = np.zeros(self.params.N)           # Annual hurdle rates
+        self.lambda_agent = np.zeros(self.params.N)  # Annual illiquidity costs
+        self.price_expectations = np.zeros(self.params.N)  # Annual price expectations
+        
+        # Assign characteristics based on agent type
+        for i, agent_type in enumerate(agent_types):
+            if agent_type == 'bearish':
+                self.rho[i] = self.params.bearish_hurdle_rate
+                self.lambda_agent[i] = self.params.bearish_illiquidity_cost
+                self.price_expectations[i] = self.params.bearish_price_expectation
+            elif agent_type == 'neutral':
+                self.rho[i] = self.params.neutral_hurdle_rate
+                self.lambda_agent[i] = self.params.neutral_illiquidity_cost
+                self.price_expectations[i] = self.params.neutral_price_expectation
+            else:  # bullish
+                self.rho[i] = self.params.bullish_hurdle_rate
+                self.lambda_agent[i] = self.params.bullish_illiquidity_cost
+                self.price_expectations[i] = self.params.bullish_price_expectation
+        
+        # Convert annual rates to daily equivalents for simulation
+        self.delta = (1 + self.rho) ** (1/self.params.E) - 1  # Daily hurdle rates
         
         # Generate wealth distribution using power law (Pareto distribution)
         # This creates realistic wealth inequality
@@ -214,16 +262,9 @@ class DPoSSimulation:
     
     def _generate_price_path(self):
         """Generate realistic price path using Geometric Brownian Motion"""
-        # Set scenario parameters
-        scenario_params = {
-            "bearish": {"mu": -0.3, "sigma": 0.4},    # -30% annual drift, 40% volatility
-            "neutral": {"mu": 0.0, "sigma": 0.3},     # 0% annual drift, 30% volatility  
-            "bullish": {"mu": 0.5, "sigma": 0.35}     # 50% annual drift, 35% volatility
-        }
-        
-        params = scenario_params.get(self.params.price_scenario, scenario_params["neutral"])
-        mu = params["mu"]      # Annual drift
-        sigma = params["sigma"] # Annual volatility
+        # Use explicit market scenario parameters
+        mu = self.params.market_drift  # Annual drift from market scenario
+        sigma = self.params.market_volatility  # Annual volatility from market scenario
         
         # Convert to daily parameters
         dt = 1/365  # Daily time step
@@ -278,25 +319,20 @@ class DPoSSimulation:
         # Convert annual illiquidity cost to daily
         daily_illiquidity_cost = self.lambda_agent * duration / self.params.E
         
-        # FIX: Price appreciation should only apply if there are actual staking rewards
-        # If yield is zero, agents get no additional benefit from staking vs holding tokens
-        price_appreciation_expectation = 0.0
+        # Use individual agent price expectations (converted to daily)
+        daily_price_expectations = np.zeros(self.params.N)
         if daily_yield > 0:  # Only apply price appreciation if there are staking rewards
-            if self.params.price_scenario == "bullish":
-                price_appreciation_expectation = 0.5 / 365  # 50% annual expected return, daily
-            elif self.params.price_scenario == "bearish":
-                price_appreciation_expectation = -0.3 / 365  # -30% annual expected return, daily
-            # neutral scenario: 0% expected price appreciation
+            daily_price_expectations = self.price_expectations / 365  # Convert annual to daily
         
-        # Agents consider both yield AND expected token appreciation (only if staking has rewards)
-        total_expected_return = daily_yield + price_appreciation_expectation
+        # Agents consider both yield AND their individual expected token appreciation
+        total_expected_return = daily_yield + daily_price_expectations
         
         # Net utility after illiquidity cost
         utility = total_expected_return - daily_illiquidity_cost
         
-        # FIX: Only add noise if there are actual rewards, otherwise utility should be deterministic
+        # Add small noise if there are actual rewards
         if daily_yield > 0:
-            noise = np.random.normal(0, 0.0001, len(self.lambda_agent))  # Small random noise
+            noise = np.random.normal(0, 0.0001, len(self.lambda_agent))
             utility = utility + noise
         
         return utility
@@ -311,21 +347,18 @@ class DPoSSimulation:
             daily_illiquidity_cost = self.lambda_agent * duration / self.params.E
             daily_yield = daily_yields[tier]
             
-            # FIX: Price appreciation should only apply if there are actual staking rewards
-            price_appreciation_expectation = 0.0
+            # Use individual agent price expectations (vectorized)
+            daily_price_expectations = np.zeros(self.params.N)
             if daily_yield > 0:  # Only apply price appreciation if there are staking rewards
-                if self.params.price_scenario == "bullish":
-                    price_appreciation_expectation = 0.5 / 365
-                elif self.params.price_scenario == "bearish":
-                    price_appreciation_expectation = -0.3 / 365
+                daily_price_expectations = self.price_expectations / 365  # Convert annual to daily
             
-            total_expected_return = daily_yield + price_appreciation_expectation
+            total_expected_return = daily_yield + daily_price_expectations
             
             # Vectorized utility calculation for all agents
             utilities[tier] = total_expected_return - daily_illiquidity_cost
             
-            # FIX: Only add noise if there are actual rewards, otherwise utility should be deterministic
-            if daily_yield > 0 and not self.params.fast_mode:  # Skip noise in fast mode for speed
+            # Add noise if there are actual rewards and not in fast mode
+            if daily_yield > 0 and not self.params.fast_mode:
                 noise = np.random.normal(0, 0.0001, self.params.N)
                 utilities[tier] += noise
                 

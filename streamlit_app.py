@@ -35,15 +35,15 @@ st.sidebar.write("**APY by Tier**")
 
 # Direct APY sliders for each tier
 liquid_apy = st.sidebar.slider("Liquid APY (%)", 1.0, 20.0, 
-                              st.session_state.get('liquid_apy', 8.0), 0.5, 
+                              st.session_state.get('liquid_apy', 5.0), 0.5, 
                               help="No lock-up required - immediate liquidity") / 100
 
 one_year_apy = st.sidebar.slider("1-Year Lock APY (%)", 2.0, 25.0, 
-                                st.session_state.get('one_year_apy', 10.0), 0.5, 
+                                st.session_state.get('one_year_apy', 8.0), 0.5, 
                                 help="1 year commitment - higher rewards") / 100
 
 two_year_apy = st.sidebar.slider("2-Year Lock APY (%)", 3.0, 30.0, 
-                                st.session_state.get('two_year_apy', 12.0), 0.5, 
+                                st.session_state.get('two_year_apy', 10.0), 0.5, 
                                 help="2 year commitment - highest rewards") / 100
 
 # Calculate base rate and multipliers for the simulation (backwards compatibility)
@@ -51,20 +51,6 @@ R_base = liquid_apy  # Use liquid APY as the base
 liquid_mult = 1.0  # Liquid is always 1x the base
 one_year_mult = one_year_apy / R_base if R_base > 0 else 1.2
 two_year_mult = two_year_apy / R_base if R_base > 0 else 1.5
-
-# User Behavior Parameters (second most important)
-st.sidebar.subheader("👥 User Population Characteristics")
-st.sidebar.write("*These parameters model your expected user base*")
-
-rho_min = st.sidebar.slider("Min Required Return (%)", 0.5, 10.0, 
-                           st.session_state.get('rho_min', 0.02) * 100, 0.5, 
-                           help="Lowest return rate users will accept") / 100
-rho_max = st.sidebar.slider("Max Required Return (%)", 5.0, 30.0, 
-                           st.session_state.get('rho_max', 0.15) * 100, 0.5, 
-                           help="Highest return rate demanded by picky users") / 100
-lambda_max = st.sidebar.slider("Max Illiquidity Tolerance (%)", 0.5, 8.0, 
-                              st.session_state.get('lambda_max', 0.02) * 100, 0.1, 
-                              help="How much users hate lock-ups") / 100
 
 wealth_concentration = st.sidebar.slider("Wealth Concentration", 1.0, 3.0, 1.5, 0.1, 
                                         help="1.0=equal wealth, 3.0=very concentrated")
@@ -74,17 +60,84 @@ st.sidebar.subheader("🏛️ Economic Environment")
 years = st.sidebar.slider("Simulation Duration (years)", 1.0, 10.0, 5.0, 0.5)
 T = int(years * 365)
 
-price_scenario = st.sidebar.selectbox(
-    "Market Scenario",
-    ["bearish", "neutral", "bullish"],
-    index=1,
-    help="Affects user expectations: Bearish=-30% drift, Neutral=0%, Bullish=+50%"
-)
+# Market Scenario
+st.sidebar.subheader("📈 Market Scenario")
+
+# Market scenario presets
+col1, col2, col3 = st.sidebar.columns(3)
+with col1:
+    if st.button("🐻 Bearish", help="Declining market conditions"):
+        st.session_state.update({
+            'market_drift': -0.3,  # -30% annual
+            'market_volatility': 0.4  # 40% volatility
+        })
+        st.rerun()
+
+with col2:
+    if st.button("😐 Neutral", help="Stable market conditions"):
+        st.session_state.update({
+            'market_drift': 0.0,   # 0% annual
+            'market_volatility': 0.3  # 30% volatility
+        })
+        st.rerun()
+
+with col3:
+    if st.button("🚀 Bullish", help="Rising market conditions"):
+        st.session_state.update({
+            'market_drift': 0.5,   # +50% annual
+            'market_volatility': 0.35  # 35% volatility
+        })
+        st.rerun()
+
+# Manual market parameters
+with st.sidebar.expander("🔧 Manual Market Settings"):
+    market_drift = st.slider("Annual Price Drift (%)", -50, 100, 
+                            int(st.session_state.get('market_drift', 0.0) * 100), 5,
+                            help="Expected annual price change") / 100
+    
+    market_volatility = st.slider("Annual Price Volatility (%)", 10, 80,
+                                 int(st.session_state.get('market_volatility', 0.3) * 100), 5,
+                                 help="Price fluctuation intensity") / 100
+    
+    st.info(f"**Current Market Scenario:**\n"
+           f"• Expected annual return: {market_drift:+.0%}\n"
+           f"• Price volatility: {market_volatility:.0%}")
+
+# Market Sentiment Distribution
+st.sidebar.subheader("�� User Psychology")
+col1, col2, col3 = st.sidebar.columns(3)
+with col1:
+    bearish_pct = st.slider("Bearish %", 0, 100, 30, 5, key="bearish_pct")
+with col2:
+    neutral_pct = st.slider("Neutral %", 0, 100, 50, 5, key="neutral_pct")
+with col3:
+    bullish_pct = st.slider("Bullish %", 0, 100, 20, 5, key="bullish_pct")
+
+# Validate percentages sum to 100
+total_pct = bearish_pct + neutral_pct + bullish_pct
+if total_pct != 100:
+    st.sidebar.warning(f"⚠️ Must sum to 100% (currently {total_pct}%)")
+
+# Sentiment configuration expanders
+with st.sidebar.expander("🐻 Bearish Users"):
+    bearish_hurdle = st.slider("Hurdle Rate (%)", 5, 25, 15, 1, key="bearish_hurdle") / 100
+    bearish_illiquidity = st.slider("Illiquidity Cost (%)", 0.5, 5.0, 3.0, 0.1, key="bearish_illiq") / 100
+    bearish_price_exp = st.slider("Price Expectation (%)", -50, 10, -30, 5, key="bearish_price") / 100
+
+with st.sidebar.expander("😐 Neutral Users"):
+    neutral_hurdle = st.slider("Hurdle Rate (%)", 3, 20, 8, 1, key="neutral_hurdle") / 100
+    neutral_illiquidity = st.slider("Illiquidity Cost (%)", 0.5, 3.0, 1.5, 0.1, key="neutral_illiq") / 100
+    neutral_price_exp = st.slider("Price Expectation (%)", -20, 30, 0, 5, key="neutral_price") / 100
+
+with st.sidebar.expander("🚀 Bullish Users"):
+    bullish_hurdle = st.slider("Hurdle Rate (%)", 1, 15, 3, 1, key="bullish_hurdle") / 100
+    bullish_illiquidity = st.slider("Illiquidity Cost (%)", 0.1, 2.0, 0.5, 0.1, key="bullish_illiq") / 100
+    bullish_price_exp = st.slider("Price Expectation (%)", 0, 100, 50, 5, key="bullish_price") / 100
 
 # Reserve & Supply (less prominent)
 with st.sidebar.expander("💰 Reserve & Supply Parameters"):
     B0 = st.sidebar.number_input("Reserve Budget (millions)", 50.0, 500.0, 
-                                st.session_state.get('B0', 100e6) / 1e6, 10.0) * 1e6
+                                st.session_state.get('B0', 200e6) / 1e6, 10.0) * 1e6
     C0 = st.sidebar.number_input("Initial Supply (millions)", 10.0, 200.0, 50.0, 5.0) * 1e6
     daily_vesting = st.sidebar.number_input("Daily Vesting (thousands)", 100.0, 5000.0, 1000.0, 100.0) * 1e3
     max_supply = st.sidebar.number_input("Max Supply (billions)", 1.0, 10.0, 2.0, 0.1) * 1e9
@@ -96,42 +149,11 @@ with st.sidebar.expander("💰 Reserve & Supply Parameters"):
 with st.sidebar.expander("⚙️ Simulation Settings"):
     N = st.sidebar.slider("Number of Simulated Users", 500, 2000, 1000, 100, 
                          help="More users = smoother estimates")
-    initial_price = st.sidebar.number_input("Initial Token Price ($)", 0.1, 100.0, 1.0, 0.1)
+    initial_price = st.sidebar.number_input("Initial Token Price ($)", 0.01, 100.0, 0.1, 0.01)
     staking_price_impact = st.sidebar.slider("Staking Price Impact (%)", 0.0, 20.0, 10.0, 1.0) / 100
 
 # Performance info
 st.sidebar.info("⚡ **Optimized Performance**\n• Daily time steps\n• Vectorized calculations")
-
-# Policy Presets
-st.sidebar.subheader("📋 Policy Presets")
-col1, col2, col3 = st.sidebar.columns(3)
-
-with col1:
-    if st.button("🎯 Conservative", help="Low risk, broad appeal"):
-        st.session_state.update({
-            'liquid_apy': 6.0, 'one_year_apy': 7.0, 'two_year_apy': 8.0,
-            'B0': 150e6, 'price_scenario': 'neutral',
-            'rho_min': 0.01, 'rho_max': 0.10, 'lambda_max': 0.015
-        })
-        st.rerun()
-
-with col2:
-    if st.button("💎 Balanced", help="Moderate rewards and risk"):
-        st.session_state.update({
-            'liquid_apy': 8.0, 'one_year_apy': 10.0, 'two_year_apy': 12.0,
-            'B0': 100e6, 'price_scenario': 'neutral',
-            'rho_min': 0.02, 'rho_max': 0.15, 'lambda_max': 0.02
-        })
-        st.rerun()
-
-with col3:
-    if st.button("🚀 Aggressive", help="High rewards, risk-seeking users"):
-        st.session_state.update({
-            'liquid_apy': 12.0, 'one_year_apy': 16.0, 'two_year_apy': 20.0,
-            'B0': 75e6, 'price_scenario': 'bullish',
-            'rho_min': 0.015, 'rho_max': 0.20, 'lambda_max': 0.025
-        })
-        st.rerun()
 
 # Run simulation button
 if st.sidebar.button("🚀 Run Policy Simulation", type="primary"):
@@ -141,24 +163,39 @@ if st.sidebar.button("🚀 Run Policy Simulation", type="primary"):
     fast_mode = False  
     vectorized = True
     
-    # Create parameters
+    # Create parameters with sentiment-based approach
     params = SimulationParams(
         T=T,
         N=N,
         R_base=R_base,
         B0=B0,
-        rho_min=rho_min,
-        rho_max=rho_max,
-        lambda_max=lambda_max,
+        # Sentiment distribution
+        bearish_pct=bearish_pct/100,
+        neutral_pct=neutral_pct/100,
+        bullish_pct=bullish_pct/100,
+        # Bearish characteristics
+        bearish_hurdle_rate=bearish_hurdle,
+        bearish_illiquidity_cost=bearish_illiquidity,
+        bearish_price_expectation=bearish_price_exp,
+        # Neutral characteristics
+        neutral_hurdle_rate=neutral_hurdle,
+        neutral_illiquidity_cost=neutral_illiquidity,
+        neutral_price_expectation=neutral_price_exp,
+        # Bullish characteristics
+        bullish_hurdle_rate=bullish_hurdle,
+        bullish_illiquidity_cost=bullish_illiquidity,
+        bullish_price_expectation=bullish_price_exp,
+        # Other parameters
         C0=C0,
         daily_vesting=daily_vesting,
         max_supply=max_supply,
         agent_holdings_ratio=agent_holdings_ratio,
         wealth_concentration=wealth_concentration,
         holdings_scale_with_agents=False,  # Fixed user base for policy evaluation
-        price_scenario=price_scenario,
         initial_price=initial_price,
         staking_price_impact=staking_price_impact,
+        market_drift=market_drift,
+        market_volatility=market_volatility,
         time_step=time_step,
         fast_mode=fast_mode,
         vectorized=vectorized,
@@ -453,6 +490,47 @@ if 'results' in st.session_state and 'params' in st.session_state and 'sim' in s
                                                    range=[[1,0], [5,5]]))
         ).properties(width=280, height=280)
         st.altair_chart(chart6, use_container_width=False)
+
+    # Add token price chart in a new row
+    st.subheader("📈 Token Price Evolution", help="Shows how token price changes over time based on market scenario and staking impact")
+    
+    # Create price evolution data - ensure arrays match length
+    price_data = results['price_track']
+    if len(price_data) == len(years_array) + 1:
+        # Price track includes initial price, skip it
+        price_values = price_data[1:]
+    else:
+        # Price track matches years exactly
+        price_values = price_data[:len(years_array)]
+    
+    price_df = pd.DataFrame({
+        'Year': years_array,
+        'Token Price ($)': price_values,
+        'Market Scenario': f"{market_drift:+.0%} drift, {market_volatility:.0%} vol"
+    })
+    
+    chart_price = alt.Chart(price_df).mark_line(strokeWidth=3, color='#ff7f0e').encode(
+        x=alt.X('Year:Q', title='Years'),
+        y=alt.Y('Token Price ($):Q', title='Token Price ($)', scale=alt.Scale(type='log')),
+        tooltip=['Year:Q', 'Token Price ($):Q', 'Market Scenario:N']
+    ).properties(width=600, height=300)
+    
+    st.altair_chart(chart_price, use_container_width=True)
+    
+    # Show price statistics
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Initial Price", f"${params.initial_price:.3f}")
+    with col2:
+        final_price = price_values[-1]
+        st.metric("Final Price", f"${final_price:.3f}", 
+                 delta=f"{((final_price/params.initial_price-1)*100):+.1f}%")
+    with col3:
+        max_price = np.max(price_values)
+        st.metric("Max Price", f"${max_price:.3f}")
+    with col4:
+        min_price = np.min(price_values)
+        st.metric("Min Price", f"${min_price:.3f}")
     
     # Determine policy type for export filename
     input_liquid_apy = params.R_base  # This is the liquid APY we set as base
