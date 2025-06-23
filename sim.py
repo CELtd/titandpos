@@ -24,6 +24,7 @@ class SimulationParams:
     # Option 2 parameters  
     E0: float = 1e8       # Initial annual emission
     k: float = 0.5        # Decay rate
+    baseline_staking: float = 10e6  # Initial baseline staking amount (existing stakers)
     
     # Tier multipliers
     multipliers: Dict[StakingTier, float] = None
@@ -588,7 +589,14 @@ class DPoSSimulation:
     
     def simulate_option2(self, debug=False) -> Dict:
         """Simulate Option 2: Decaying emission with dynamic APYs"""
-        print("Simulating Option 2: Dynamic Emissions")
+        if debug:
+            print("Simulating Option 2: Dynamic Emissions")
+            if self.params.time_step > 1:
+                print(f"Using time step: {self.params.time_step} days")
+            if self.params.vectorized:
+                print("Using vectorized calculations")
+            if self.params.fast_mode:
+                print("Fast mode enabled")
         
         # Reset tracking for clean comparison
         self.setup_tracking()
@@ -604,19 +612,20 @@ class DPoSSimulation:
             emission_t = self.params.E0 * np.exp(-self.params.k * t / 365)
             self.emission_track_opt2[t] = emission_t
             
-            # If this is the first period, estimate initial staking for APY calculation
+            # Calculate current weighted stake: baseline + agent staking
             if t == 0:
-                # Use a reasonable initial estimate
-                estimated_weighted_stake = self.C_track[t] * 0.3  # Assume 30% initial staking
+                # Start with baseline staking (existing stakers not modeled as agents)
+                current_weighted_stake = self.params.baseline_staking
             else:
-                estimated_weighted_stake = self.weighted_stake_track[t-1]
+                # Baseline + previous period's agent staking
+                current_weighted_stake = self.params.baseline_staking + self.weighted_stake_track[t-1]
             
             # Calculate dynamic APYs for each tier
             daily_yields = {}
             for tier in self.tiers:
                 multiplier = self.params.multipliers[tier]
-                if estimated_weighted_stake > 0:
-                    base_daily_yield = emission_t / (365 * estimated_weighted_stake)
+                if current_weighted_stake > 0:
+                    base_daily_yield = emission_t / (365 * current_weighted_stake)
                     daily_yields[tier] = multiplier * base_daily_yield
                     
                     # FIX: If emissions become very low (less than 1% of initial), 
@@ -628,42 +637,49 @@ class DPoSSimulation:
                 
                 self.apy_track[tier][t] = daily_yields[tier] * 365
             
-            # Agent decision making
-            demand = {tier: 0.0 for tier in self.tiers}  # Now tracks total stake demand, not agent count
-            agent_count = {tier: 0 for tier in self.tiers}  # Track agent count for debugging
-            utilities_debug = {tier: [] for tier in self.tiers}
-            
-            # Track agents who decide to unstake (new feature)
-            unstaking_agents = 0
-            
-            for i in range(self.params.N):
-                available_tokens = self.agent_holdings_track[i, t]
+            # Agent decision making - USE VECTORIZED VERSION LIKE OPTION 1
+            if self.params.vectorized:
+                decision_results = self.make_agent_decisions_vectorized(daily_yields, t)
+                demand = decision_results['demand']
+                agent_count = decision_results['agent_count']
+                unstaking_agents = decision_results['unstaking_agents']
+            else:
+                # Fallback to original (slower) method
+                demand = {tier: 0.0 for tier in self.tiers}  # Now tracks total stake demand, not agent count
+                agent_count = {tier: 0 for tier in self.tiers}  # Track agent count for debugging
+                utilities_debug = {tier: [] for tier in self.tiers}
                 
-                if available_tokens <= 0:
-                    continue  # Agent has no tokens to stake
+                # Track agents who decide to unstake (new feature)
+                unstaking_agents = 0
                 
-                utilities = {}
-                for tier in self.tiers:
-                    utilities[tier] = self.calculate_agent_utility(tier, daily_yields[tier], t)[i]
-                    if debug and t == 0 and i < 5:  # Debug first 5 agents on first day
-                        utilities_debug[tier].append(utilities[tier])
-                
-                # Choose best tier if utility exceeds hurdle rate
-                best_tier = max(utilities.keys(), key=lambda x: utilities[x])
-                best_utility = utilities[best_tier]
-                
-                # FIX: More dynamic staking behavior
-                # Only stake if utility is positive AND exceeds hurdle rate
-                # This makes agents more responsive to changing conditions
-                if best_utility >= self.delta[i] and best_utility >= 0:
-                    # FIX: Stake only a portion of available tokens (keep some liquid)
-                    stake_amount = available_tokens * self.params.max_stake_ratio
-                    demand[best_tier] += stake_amount
-                    agent_count[best_tier] += 1
-                else:
-                    # Agent chooses not to stake (keeps tokens liquid)
-                    # This creates more realistic, dynamic behavior
-                    unstaking_agents += 1
+                for i in range(self.params.N):
+                    available_tokens = self.agent_holdings_track[i, t]
+                    
+                    if available_tokens <= 0:
+                        continue  # Agent has no tokens to stake
+                    
+                    utilities = {}
+                    for tier in self.tiers:
+                        utilities[tier] = self.calculate_agent_utility(tier, daily_yields[tier], t)[i]
+                        if debug and t == 0 and i < 5:  # Debug first 5 agents on first day
+                            utilities_debug[tier].append(utilities[tier])
+                    
+                    # Choose best tier if utility exceeds hurdle rate
+                    best_tier = max(utilities.keys(), key=lambda x: utilities[x])
+                    best_utility = utilities[best_tier]
+                    
+                    # FIX: More dynamic staking behavior
+                    # Only stake if utility is positive AND exceeds hurdle rate
+                    # This makes agents more responsive to changing conditions
+                    if best_utility >= self.delta[i] and best_utility >= 0:
+                        # FIX: Stake only a portion of available tokens (keep some liquid)
+                        stake_amount = available_tokens * self.params.max_stake_ratio
+                        demand[best_tier] += stake_amount
+                        agent_count[best_tier] += 1
+                    else:
+                        # Agent chooses not to stake (keeps tokens liquid)
+                        # This creates more realistic, dynamic behavior
+                        unstaking_agents += 1
             
             # Cap demand to available agent holdings (can't stake more than they own!)
             total_demand = sum(demand.values())
@@ -675,9 +691,13 @@ class DPoSSimulation:
                 for tier in self.tiers:
                     print(f"  {tier.value}: {daily_yields[tier]:.6f} (APY: {self.apy_track[tier][t]:.2%})")
                 print(f"Agent holdings: min={self.agent_holdings_track[:, t].min()/1e3:.1f}K, max={self.agent_holdings_track[:, t].max()/1e6:.1f}M, total={self.agent_holdings_track[:, t].sum()/1e6:.1f}M")
-                print("Sample agent utilities (first 5 agents):")
-                for tier in self.tiers:
-                    print(f"  {tier.value}: {utilities_debug[tier]}")
+                
+                # Only show utilities debug if not using vectorized mode
+                if not self.params.vectorized:
+                    print("Sample agent utilities (first 5 agents):")
+                    for tier in self.tiers:
+                        print(f"  {tier.value}: {utilities_debug[tier]}")
+                
                 print(f"Total stake demand: {sum(demand.values())/1e6:.1f}M tokens")
                 print(f"Agent participation by tier:")
                 for tier in self.tiers:
