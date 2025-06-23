@@ -6,20 +6,47 @@ import numpy as np
 # Import our simulation classes
 from sim import DPoSSimulation, SimulationParams, StakingTier
 
+# Clean up session state on code reload to prevent KeyErrors with enum objects
+def clean_session_state():
+    """Clean up old simulation results that may have stale enum references"""
+    keys_to_clear = []
+    for key in st.session_state.keys():
+        if 'results_' in key or 'params_' in key or 'sim_' in key:
+            # Check if we have results with StakingTier keys that might be stale
+            if key.startswith('results_'):
+                try:
+                    results = st.session_state[key]
+                    if isinstance(results, dict) and 'apy_track' in results:
+                        # Try to access a StakingTier key - if it fails, clear this session state
+                        _ = results['apy_track'][StakingTier.LIQUID]
+                except (KeyError, TypeError, AttributeError):
+                    keys_to_clear.append(key)
+    
+    # Clear problematic keys
+    for key in keys_to_clear:
+        if key in st.session_state:
+            del st.session_state[key]
+    
+    if keys_to_clear:
+        st.info(f"Cleaned up {len(keys_to_clear)} stale simulation results due to code reload.")
+
+# Run cleanup on app start
+clean_session_state()
+
 # Page config
 st.set_page_config(
     page_title="DPoS Policy Simulator",
-    page_icon="🎯",
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-st.title("🎯 DPoS Staking Policy Simulator")
+st.title("DPoS Staking Policy Simulator")
 st.markdown("**Evaluate staking policies and predict user participation rates**")
 
 # Add key business questions upfront
 st.info(
-    "💡 **Key Questions This Tool Answers:**\n"
+    "**Key Questions This Tool Answers:**\n"
     "• What APY do we need for 70% user participation?\n"
     "• How does user risk tolerance affect staking adoption?\n"
     "• Can our reserves sustain this participation level?\n"
@@ -27,7 +54,7 @@ st.info(
 )
 
 # Create tabs for Option 1 and Option 2
-tab1, tab2 = st.tabs(["💰 Option 1: Fixed Budget", "📈 Option 2: Dynamic Emissions"])
+tab1, tab2 = st.tabs(["Option 1: Fixed Budget", "Option 2: Dynamic Emissions"])
 
 with tab1:
     st.markdown("**Fixed budget approach**: Set APYs directly, rewards come from a fixed reserve")
@@ -36,20 +63,20 @@ with tab2:
     st.markdown("**Dynamic emissions approach**: APYs determined by emission schedule and total staking")
 
 # Shared sidebar configuration for both options
-st.sidebar.header("🎯 Simulation Configuration")
+st.sidebar.header("Simulation Configuration")
 
 # Common Economic Environment (shared by both options)
-st.sidebar.subheader("🏛️ Economic Environment")
+st.sidebar.subheader("Economic Environment")
 years = st.sidebar.slider("Simulation Duration (years)", 1.0, 10.0, 5.0, 0.5)
 T = int(years * 365)
 
 # Market Scenario (shared)
-st.sidebar.subheader("📈 Market Scenario")
+st.sidebar.subheader("Market Scenario")
 
 # Market scenario presets
 col1, col2, col3 = st.sidebar.columns(3)
 with col1:
-    if st.button("🐻 Bearish", help="Declining market conditions"):
+    if st.button("Bearish", help="Declining market conditions"):
         st.session_state.update({
             'market_drift': -0.3,  # -30% annual
             'market_volatility': 0.4  # 40% volatility
@@ -57,7 +84,7 @@ with col1:
         st.rerun()
 
 with col2:
-    if st.button("😐 Neutral", help="Stable market conditions"):
+    if st.button("Neutral", help="Stable market conditions"):
         st.session_state.update({
             'market_drift': 0.0,   # 0% annual
             'market_volatility': 0.3  # 30% volatility
@@ -65,7 +92,7 @@ with col2:
         st.rerun()
 
 with col3:
-    if st.button("🚀 Bullish", help="Rising market conditions"):
+    if st.button("Bullish", help="Rising market conditions"):
         st.session_state.update({
             'market_drift': 0.5,   # +50% annual
             'market_volatility': 0.35  # 35% volatility
@@ -73,7 +100,7 @@ with col3:
         st.rerun()
 
 # Manual market parameters
-with st.sidebar.expander("🔧 Manual Market Settings"):
+with st.sidebar.expander("Manual Market Settings"):
     market_drift = st.slider("Annual Price Drift (%)", -50, 100, 
                             int(st.session_state.get('market_drift', 0.0) * 100), 5,
                             help="Expected annual price change") / 100
@@ -87,7 +114,7 @@ with st.sidebar.expander("🔧 Manual Market Settings"):
            f"• Price volatility: {market_volatility:.0%}")
 
 # Agent Psychology (shared)
-st.sidebar.subheader("🧠 User Psychology")
+st.sidebar.subheader("User Psychology")
 col1, col2, col3 = st.sidebar.columns(3)
 with col1:
     bearish_pct = st.slider("Bearish %", 0, 100, 30, 5, key="bearish_pct")
@@ -99,26 +126,26 @@ with col3:
 # Validate percentages sum to 100
 total_pct = bearish_pct + neutral_pct + bullish_pct
 if total_pct != 100:
-    st.sidebar.warning(f"⚠️ Must sum to 100% (currently {total_pct}%)")
+    st.sidebar.warning(f"Warning: Must sum to 100% (currently {total_pct}%)")
 
 # Sentiment configuration expanders
-with st.sidebar.expander("🐻 Bearish Users"):
+with st.sidebar.expander("Bearish Users"):
     bearish_hurdle = st.slider("Hurdle Rate (%)", 5, 25, 15, 1, key="bearish_hurdle") / 100
     bearish_illiquidity = st.slider("Illiquidity Cost (%)", 0.5, 5.0, 3.0, 0.1, key="bearish_illiq") / 100
     bearish_price_exp = st.slider("Price Expectation (%)", -50, 10, -30, 5, key="bearish_price") / 100
 
-with st.sidebar.expander("😐 Neutral Users"):
+with st.sidebar.expander("Neutral Users"):
     neutral_hurdle = st.slider("Hurdle Rate (%)", 3, 20, 8, 1, key="neutral_hurdle") / 100
     neutral_illiquidity = st.slider("Illiquidity Cost (%)", 0.5, 3.0, 1.5, 0.1, key="neutral_illiq") / 100
     neutral_price_exp = st.slider("Price Expectation (%)", -20, 30, 0, 5, key="neutral_price") / 100
 
-with st.sidebar.expander("🚀 Bullish Users"):
+with st.sidebar.expander("Bullish Users"):
     bullish_hurdle = st.slider("Hurdle Rate (%)", 1, 15, 3, 1, key="bullish_hurdle") / 100
     bullish_illiquidity = st.slider("Illiquidity Cost (%)", 0.1, 2.0, 0.5, 0.1, key="bullish_illiq") / 100
     bullish_price_exp = st.slider("Price Expectation (%)", 0, 100, 50, 5, key="bullish_price") / 100
 
 # Supply & Economics (shared)
-with st.sidebar.expander("💰 Supply & Economics"):
+with st.sidebar.expander("Supply & Economics"):
     C0 = st.sidebar.number_input("Initial Supply (millions)", 10.0, 200.0, 50.0, 5.0) * 1e6
     daily_vesting = st.sidebar.number_input("Daily Vesting (thousands)", 100.0, 5000.0, 1000.0, 100.0) * 1e3
     max_supply = st.sidebar.number_input("Max Supply (billions)", 1.0, 10.0, 2.0, 0.1) * 1e9
@@ -129,7 +156,7 @@ with st.sidebar.expander("💰 Supply & Economics"):
                                             help="1.0=equal wealth, 3.0=very concentrated")
 
 # Simulation Settings (shared)
-with st.sidebar.expander("⚙️ Simulation Settings"):
+with st.sidebar.expander("Simulation Settings"):
     N = st.sidebar.slider("Number of Simulated Users", 500, 2000, 1000, 100, 
                          help="More users = smoother estimates")
     initial_price = st.sidebar.number_input("Initial Token Price ($)", 0.01, 100.0, 0.1, 0.01)
@@ -137,10 +164,10 @@ with st.sidebar.expander("⚙️ Simulation Settings"):
 
 # OPTION-SPECIFIC CONTROLS
 st.sidebar.markdown("---")
-st.sidebar.subheader("🎯 Reward Mechanism")
+st.sidebar.subheader("Reward Mechanism")
 
 # Option 1: Fixed Budget Controls
-with st.sidebar.expander("💰 Option 1: Fixed APY", expanded=False):
+with st.sidebar.expander("Option 1: Fixed APY", expanded=False):
     st.write("**Set APY rates directly**")
     
     # Direct APY sliders for each tier
@@ -172,7 +199,7 @@ with st.sidebar.expander("💰 Option 1: Fixed APY", expanded=False):
            f"• 2-Year: {two_year_apy*100:.1f}% ({two_year_mult:.1f}x)")
 
 # Option 2: Dynamic Emissions Controls  
-with st.sidebar.expander("⚡ Option 2: Dynamic Multipliers", expanded=False):
+with st.sidebar.expander("Option 2: Dynamic Multipliers", expanded=False):
     st.write("**Set multipliers, APY varies with participation**")
     st.caption("APY = (Emission × Multiplier) ÷ (365 × Total Weighted Stake)")
     
@@ -191,6 +218,11 @@ with st.sidebar.expander("⚡ Option 2: Dynamic Multipliers", expanded=False):
     k = st.slider("Decay Rate", 0.1, 2.0, 0.5, 0.1, 
                  help="Higher = faster emission decay", key="opt2_decay")
     
+    # Baseline staking (existing stakers)
+    baseline_staking = st.number_input("Baseline Staking (millions)", 5.0, 100.0, 10.0, 1.0,
+                                     help="Initial staking amount from existing users (not modeled as agents)", 
+                                     key="opt2_baseline") * 1e6
+    
     # Show current multiplier relationships
     st.info(f"**Multiplier Ratios:**\n"
            f"• 1-Year vs Liquid: {one_year_multiplier/liquid_multiplier:.1f}x\n"
@@ -198,12 +230,12 @@ with st.sidebar.expander("⚡ Option 2: Dynamic Multipliers", expanded=False):
            f"• 2-Year vs 1-Year: {two_year_multiplier/one_year_multiplier:.1f}x")
 
 # Performance info
-st.sidebar.info("⚡ **Optimized Performance**\n• Daily time steps\n• Vectorized calculations")
+st.sidebar.info("**Optimized Performance**\n• Daily time steps\n• Vectorized calculations")
 
 # Option 1 simulation button and results
 with tab1:
     # Run simulation button for Option 1
-    if st.sidebar.button("🚀 Run Option 1 Simulation", type="primary", key="run_opt1"):
+    if st.sidebar.button("Run Option 1 Simulation", type="primary", key="run_opt1"):
         
         # Optimized simulation parameters
         time_step = 1  # Daily for accuracy
@@ -254,7 +286,7 @@ with tab1:
         )
         
         # Run simulation
-        with st.spinner("Evaluating Option 1 policy effectiveness..."):
+        with st.spinner("Running Option 1 simulation..."):
             sim = DPoSSimulation(params)
             results = sim.simulate_option1(debug=False)
             
@@ -265,7 +297,7 @@ with tab1:
     
     # Display Option 1 results if available
     if 'results_opt1' in st.session_state:
-        st.header("📊 Option 1 Results: Fixed APY")
+        st.header("Option 1 Results: Fixed APY")
         
         try:
             results = st.session_state['results_opt1']
@@ -277,13 +309,28 @@ with tab1:
                 st.error("❌ Invalid results structure. Please re-run the simulation.")
                 st.stop()
             
+            # Additional validation: check if we can access StakingTier keys
+            try:
+                _ = results['apy_track'][StakingTier.LIQUID]
+            except KeyError:
+                st.error("Stale simulation results detected (likely due to code reload). Please re-run the simulation.")
+                # Clear the problematic session state
+                for key in ['results_opt1', 'params_opt1', 'sim_opt1']:
+                    if key in st.session_state:
+                        del st.session_state[key]
+                st.stop()
+            
         except Exception as e:
-            st.error(f"❌ Error accessing simulation results: {e}")
+            st.error(f"Error accessing simulation results: {e}")
             st.info("Please run a new simulation.")
+            # Clear potentially corrupted session state
+            for key in ['results_opt1', 'params_opt1', 'sim_opt1']:
+                if key in st.session_state:
+                    del st.session_state[key]
             st.stop()
         
         # REDESIGNED METRICS - Policy Evaluation Focus
-        st.subheader("📊 Policy Effectiveness")
+        st.subheader("Policy Effectiveness")
         
         # Calculate user participation metrics
         total_agent_holdings_over_time = np.sum(sim.agent_holdings_track, axis=0)
@@ -307,17 +354,17 @@ with tab1:
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            st.metric("🎯 User Participation", f"{estimated_user_participation:.1f}%", 
+            st.metric("User Participation", f"{estimated_user_participation:.1f}%", 
                      help="Estimated % of token holders who choose to stake")
         
         with col2:
-            st.metric("💎 Supply Staked", f"{supply_participation:.1f}%", 
+            st.metric("Supply Staked", f"{supply_participation:.1f}%", 
                      help="% of total token supply being staked")
         
         with col3:
             final_reserve = results['reserve_track'][-1]
             reserve_pct = (final_reserve / params.B0) * 100
-            st.metric("🏛️ Reserve Health", f"{reserve_pct:.1f}%", 
+            st.metric("Reserve Health", f"{reserve_pct:.1f}%", 
                      delta=f"{reserve_pct-100:.1f}%" if reserve_pct != 100 else "Stable",
                      help="Remaining reserve budget")
         
@@ -331,24 +378,24 @@ with tab1:
             else:
                 sustainability = "Sustainable"
                 delta_color = "normal"
-            st.metric("⏱️ Policy Duration", sustainability,
+            st.metric("Policy Duration", sustainability,
                      help="How long this policy can be maintained")
         
         # Policy insights
         if estimated_user_participation < 50:
-            st.warning("⚠️ **Low User Adoption**: Consider increasing APY or targeting more risk-tolerant users")
+            st.warning("**Low User Adoption**: Consider increasing APY or targeting more risk-tolerant users")
         elif estimated_user_participation > 90:
-            st.success("🎉 **Excellent Adoption**: Policy is very attractive to users")
+            st.success("**Excellent Adoption**: Policy is very attractive to users")
         else:
-            st.info("✅ **Good Adoption**: Solid user participation rate")
+            st.info("**Good Adoption**: Solid user participation rate")
         
         if supply_participation > 60:
-            st.info("🔐 **High Security**: Large portion of supply is staked and securing the network")
+            st.info("**High Security**: Large portion of supply is staked and securing the network")
         elif supply_participation < 20:
-            st.warning("🔓 **Security Risk**: Low staking participation may reduce network security")
+            st.warning("**Security Risk**: Low staking participation may reduce network security")
 
         # Charts
-        st.header("📈 Results")
+        st.header("Results")
         
         # Create time arrays (both days and years)
         days = np.arange(params.T)
@@ -410,9 +457,9 @@ with tab1:
             'Allocation': ['Staked (Earning Rewards)'] * len(days) + ['Liquid (Available)'] * len(days)
         })
         
-        # Policy-Focused 2x3 Grid Layout
+        # Policy-Focused Layout: 3 Rows x 2 Columns for Better Visibility
         # Row 1: Key Policy Metrics
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
         
         with col1:
             st.subheader("User Engagement", help="Percentage of user token holdings that are actively staked (earning rewards)")
@@ -436,9 +483,9 @@ with tab1:
             ).encode(y='y:Q')
             
             chart1 = (chart1_base + ref_90 + ref_70 + ref_50).properties(
-                width=280, height=280
+                width=400, height=300
             ).resolve_scale(color='independent')
-            st.altair_chart(chart1, use_container_width=False)
+            st.altair_chart(chart1, use_container_width=True)
         
         with col2:
             st.subheader("Policy Costs", help="Shows cumulative policy costs (purple area) and remaining reserve budget (orange line)")
@@ -458,9 +505,12 @@ with tab1:
             )
             
             chart2 = (chart2_area + chart2_line).properties(
-                width=280, height=280
+                width=400, height=300
             ).resolve_scale(color='independent')
-            st.altair_chart(chart2, use_container_width=False)
+            st.altair_chart(chart2, use_container_width=True)
+        
+        # Row 2: Network Security & User Behavior
+        col3, col4 = st.columns(2)
         
         with col3:
             st.subheader("Network Security", help="Percentage of total token supply that is staked and securing the network")
@@ -484,12 +534,9 @@ with tab1:
             ).encode(y='y:Q')
             
             chart3 = (chart3_base + ref_high + ref_medium + ref_low).properties(
-                width=280, height=280
+                width=400, height=300
             ).resolve_scale(color='independent')
-            st.altair_chart(chart3, use_container_width=False)
-        
-        # Row 2: Policy Design Analysis
-        col4, col5, col6 = st.columns(3)
+            st.altair_chart(chart3, use_container_width=True)
         
         with col4:
             st.subheader("Tier Preferences", help="Shows which lock-up periods users prefer: Liquid (no lock), 1-Year, or 2-Year commitments")
@@ -501,8 +548,11 @@ with tab1:
                                scale=alt.Scale(range=['#87CEEB', '#32CD32', '#FF6347']),
                                legend=None),
                 order=alt.Order('Tier:N', sort='ascending')
-            ).properties(width=280, height=280)
-            st.altair_chart(chart4, use_container_width=False)
+            ).properties(width=400, height=300)
+            st.altair_chart(chart4, use_container_width=True)
+        
+        # Row 3: Capital Allocation & Supply Analysis
+        col5, col6 = st.columns(2)
         
         with col5:
             st.subheader("Capital Allocation", help="How users split their token holdings between staking (earning rewards) vs keeping liquid (available for trading)")
@@ -514,8 +564,8 @@ with tab1:
                                scale=alt.Scale(range=['#FF6B6B', '#4ECDC4']),
                                legend=None),
                 order=alt.Order('Allocation:N', sort='descending')
-            ).properties(width=280, height=280)
-            st.altair_chart(chart5, use_container_width=False)
+            ).properties(width=400, height=300)
+            st.altair_chart(chart5, use_container_width=True)
         
         with col6:
             st.subheader("Staked vs Supply", help="Compares total staked tokens (solid line) against circulating supply (dashed line) over time")
@@ -537,11 +587,11 @@ with tab1:
                 strokeDash=alt.StrokeDash('Type:N',
                                          scale=alt.Scale(domain=['Total Staked', 'Circulating Supply'],
                                                        range=[[1,0], [5,5]]))
-            ).properties(width=280, height=280)
-            st.altair_chart(chart6, use_container_width=False)
+            ).properties(width=400, height=300)
+            st.altair_chart(chart6, use_container_width=True)
 
         # Add token price chart in a new row
-        st.subheader("📈 Token Price Evolution", help="Shows how token price changes over time based on market scenario and staking impact")
+        st.subheader("Token Price Evolution", help="Shows how token price changes over time based on market scenario and staking impact")
         
         # Create price evolution data - ensure arrays match length
         price_data = results['price_track']
@@ -591,7 +641,7 @@ with tab1:
             policy_type = "Aggressive"
         
         # Export section
-        st.header("📋 Export Results")
+        st.header("Export Results")
         
         # Create policy-focused export data
         export_data = {
@@ -622,7 +672,7 @@ with tab1:
             # Add download button
             csv = export_df.to_csv(index=False)
             st.download_button(
-                label="📥 Download Detailed Results",
+                label="Download Detailed Results",
                 data=csv,
                 file_name=f"dpos_policy_analysis_{policy_name}.csv",
                 mime="text/csv",
@@ -660,7 +710,7 @@ with tab1:
             summary_csv = summary_df.to_csv(index=False)
             
             st.download_button(
-                label="📋 Download Policy Summary",
+                label="Download Policy Summary",
                 data=summary_csv,
                 file_name=f"policy_summary_{policy_name}.csv",
                 mime="text/csv",
@@ -668,7 +718,7 @@ with tab1:
             )
         
         # Preview policy data
-        st.subheader("📊 Policy Data Preview")
+        st.subheader("Policy Data Preview")
         show_full_table = st.checkbox("Show complete time series", value=False)
         
         if show_full_table:
@@ -681,17 +731,17 @@ with tab1:
             st.info(f"Showing quarterly snapshots. Check 'Show complete time series' to see all {len(export_df)} data points.")
         
         # Additional insights
-        st.header("🔍 Insights")
+        st.header("Insights")
         
         col1, col2 = st.columns(2)
         
         with col1:
             st.subheader("Reserve Analysis")
             if depletion_day:
-                st.error(f"⚠️ Reserve depleted on day {depletion_day}")
+                st.error(f"Reserve depleted on day {depletion_day}")
                 st.write(f"Reserve lasted {depletion_day/365:.1f} years")
             else:
-                st.success("✅ Reserve maintained throughout simulation")
+                st.success("Reserve maintained throughout simulation")
                 reserve_burn_rate = (params.B0 - final_reserve) / params.T
                 st.write(f"Daily burn rate: {reserve_burn_rate/1e6:.2f}M tokens")
                 
@@ -724,10 +774,10 @@ with tab1:
                 st.write(f"- 1-Year: {(final_1yr/total_final)*100:.1f}%")
                 st.write(f"- 2-Year: {(final_2yr/total_final)*100:.1f}%")
     else:
-        st.info("👈 Configure Option 1 parameters and click 'Run Option 1 Simulation' to see results!")
+        st.info("Configure Option 1 parameters and click 'Run Option 1 Simulation' to see results!")
         
         # Show some example configurations
-        st.subheader("💡 Example Configurations")
+        st.subheader("Example Configurations")
         
         examples = {
             "Conservative": {
@@ -755,7 +805,7 @@ with tab1:
 
 with tab2:
     # Option 2 simulation button and results
-    if st.sidebar.button("🚀 Run Option 2 Simulation", type="primary", key="run_opt2"):
+    if st.sidebar.button("Run Option 2 Simulation", type="primary", key="run_opt2"):
         
         # Optimized simulation parameters
         time_step = 1  # Daily for accuracy
@@ -768,6 +818,7 @@ with tab2:
             N=N,
             E0=E0,
             k=k,
+            baseline_staking=baseline_staking,
             # Sentiment distribution
             bearish_pct=bearish_pct/100,
             neutral_pct=neutral_pct/100,
@@ -806,7 +857,7 @@ with tab2:
         )
         
         # Run simulation
-        with st.spinner("Evaluating Option 2 dynamic emissions policy..."):
+        with st.spinner("Running Option 2 simulation..."):
             sim = DPoSSimulation(params)
             results = sim.simulate_option2(debug=False)
             
@@ -817,7 +868,7 @@ with tab2:
     
     # Display Option 2 results if available
     if 'results_opt2' in st.session_state:
-        st.header("📊 Option 2 Results: Dynamic Emissions")
+        st.header("Option 2 Results: Dynamic Emissions")
         
         try:
             results = st.session_state['results_opt2']
@@ -826,16 +877,31 @@ with tab2:
             
             # Validate results structure
             if not all(key in results for key in ['apy_track', 'staked_track', 'total_staked', 'emission_track', 'price_track']):
-                st.error("❌ Invalid results structure. Please re-run the simulation.")
+                st.error("Invalid results structure. Please re-run the simulation.")
+                st.stop()
+            
+            # Additional validation: check if we can access StakingTier keys
+            try:
+                _ = results['apy_track'][StakingTier.LIQUID]
+            except KeyError:
+                st.error("Stale simulation results detected (likely due to code reload). Please re-run the simulation.")
+                # Clear the problematic session state
+                for key in ['results_opt2', 'params_opt2', 'sim_opt2']:
+                    if key in st.session_state:
+                        del st.session_state[key]
                 st.stop()
             
         except Exception as e:
-            st.error(f"❌ Error accessing simulation results: {e}")
+            st.error(f"Error accessing simulation results: {e}")
             st.info("Please run a new simulation.")
+            # Clear potentially corrupted session state
+            for key in ['results_opt2', 'params_opt2', 'sim_opt2']:
+                if key in st.session_state:
+                    del st.session_state[key]
             st.stop()
         
         # OPTION 2 METRICS - Dynamic Emissions Focus
-        st.subheader("📊 Dynamic Policy Effectiveness")
+        st.subheader("Dynamic Policy Effectiveness")
         
         # Calculate user participation metrics
         total_agent_holdings_over_time = np.sum(sim.agent_holdings_track, axis=0)
@@ -853,10 +919,10 @@ with tab2:
         
         estimated_user_participation = min(100, agent_participation_rate / 0.8 * 100)
         
-        # Calculate APY statistics
-        liquid_apy_avg = np.mean(results['apy_track'][StakingTier.LIQUID]) * 100
-        one_year_apy_avg = np.mean(results['apy_track'][StakingTier.ONE_YEAR]) * 100
-        two_year_apy_avg = np.mean(results['apy_track'][StakingTier.TWO_YEAR]) * 100
+        # Calculate APY statistics (excluding Day 0 artifacts)
+        liquid_apy_avg = np.mean(results['apy_track'][StakingTier.LIQUID][1:]) * 100
+        one_year_apy_avg = np.mean(results['apy_track'][StakingTier.ONE_YEAR][1:]) * 100
+        two_year_apy_avg = np.mean(results['apy_track'][StakingTier.TWO_YEAR][1:]) * 100
         
         # Calculate total emissions used
         total_emissions = np.sum(results['emission_track'])
@@ -864,64 +930,82 @@ with tab2:
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            st.metric("🎯 User Participation", f"{estimated_user_participation:.1f}%", 
+            st.metric("User Participation", f"{estimated_user_participation:.1f}%", 
                      help="Estimated % of token holders who choose to stake")
         
         with col2:
-            st.metric("💎 Supply Staked", f"{supply_participation:.1f}%", 
+            st.metric("Supply Staked", f"{supply_participation:.1f}%", 
                      help="% of total token supply being staked")
         
         with col3:
-            st.metric("📈 Avg APY Range", f"{liquid_apy_avg:.1f}%-{two_year_apy_avg:.1f}%", 
+            st.metric("Avg APY Range", f"{liquid_apy_avg:.1f}%-{two_year_apy_avg:.1f}%", 
                      help="Average APY range from Liquid to 2-Year tiers")
         
         with col4:
-            st.metric("🚀 Total Emissions", f"{total_emissions/1e6:.1f}M", 
+            st.metric("Total Emissions", f"{total_emissions/1e6:.1f}M", 
                      help="Total tokens emitted as rewards over simulation period")
         
         # Policy insights for Option 2
         if estimated_user_participation < 50:
-            st.warning("⚠️ **Low User Adoption**: Consider adjusting multipliers or emission schedule")
+            st.warning("**Low User Adoption**: Consider adjusting multipliers or emission schedule")
         elif estimated_user_participation > 90:
-            st.success("🎉 **Excellent Adoption**: Dynamic policy is very attractive to users")
+            st.success("**Excellent Adoption**: Dynamic policy is very attractive to users")
         else:
-            st.info("✅ **Good Adoption**: Solid user participation with dynamic rewards")
+            st.info("**Good Adoption**: Solid user participation with dynamic rewards")
         
         if supply_participation > 60:
-            st.info("🔐 **High Security**: Large portion of supply is staked and securing the network")
+            st.info("**High Security**: Large portion of supply is staked and securing the network")
         elif supply_participation < 20:
-            st.warning("🔓 **Security Risk**: Low staking participation may reduce network security")
+            st.warning("**Security Risk**: Low staking participation may reduce network security")
 
         # Charts - Focus on Option 2 specific visualizations
-        st.header("📈 Dynamic Emissions Results")
+        st.header("Dynamic Emissions Results")
         
         # Create time arrays
         days = np.arange(params.T)
         years_array = days / 365.0
         
         # THE KEY CHART: Variable APY by Bucket (what the user specifically requested)
-        st.subheader("🎯 Variable APY by Staking Tier", help="Shows how APY changes over time for each staking tier based on participation levels")
+        st.subheader("Variable APY by Staking Tier", help="Shows how APY changes over time for each staking tier based on participation levels")
         
-        # Create APY dataframe for the key chart
+        # Add log scale toggle
+        col_toggle, col_info = st.columns([1, 3])
+        with col_toggle:
+            use_log_scale = st.checkbox("Log Scale", value=False, help="Use logarithmic scale for APY axis (helpful when APY values vary widely)")
+        with col_info:
+            st.info("**Note**: Chart starts from Day 1 to exclude artificial Day 0 APY spikes caused by baseline staking setup.")
+        
+        # Create APY dataframe for the key chart (skip Day 0 due to setup artifacts)
+        days_from_1 = days[1:]  # Skip day 0
+        years_from_1 = years_array[1:]  # Skip day 0
+        
         apy_df = pd.DataFrame({
-            'Year': np.concatenate([years_array, years_array, years_array]),
+            'Year': np.concatenate([years_from_1, years_from_1, years_from_1]),
             'APY (%)': np.concatenate([
-                results['apy_track'][StakingTier.LIQUID] * 100,
-                results['apy_track'][StakingTier.ONE_YEAR] * 100,
-                results['apy_track'][StakingTier.TWO_YEAR] * 100
+                results['apy_track'][StakingTier.LIQUID][1:] * 100,
+                results['apy_track'][StakingTier.ONE_YEAR][1:] * 100,
+                results['apy_track'][StakingTier.TWO_YEAR][1:] * 100
             ]),
-            'Tier': (['Liquid (No Lock)'] * len(years_array) + 
-                    ['1-Year Lock'] * len(years_array) + 
-                    ['2-Year Lock'] * len(years_array)),
-            'Multiplier': ([f"{liquid_multiplier}x"] * len(years_array) + 
-                          [f"{one_year_multiplier}x"] * len(years_array) + 
-                          [f"{two_year_multiplier}x"] * len(years_array))
+            'Tier': (['Liquid (No Lock)'] * len(years_from_1) + 
+                    ['1-Year Lock'] * len(years_from_1) + 
+                    ['2-Year Lock'] * len(years_from_1)),
+            'Multiplier': ([f"{liquid_multiplier}x"] * len(years_from_1) + 
+                          [f"{one_year_multiplier}x"] * len(years_from_1) + 
+                          [f"{two_year_multiplier}x"] * len(years_from_1))
         })
         
         # Create the APY chart with different colors for each tier
+        # Conditional y-axis scale based on toggle
+        if use_log_scale:
+            y_scale = alt.Scale(type='log', zero=False)
+            chart_title = "Variable APY by Staking Tier (Day 1+, Log Scale) - Higher Participation = Lower APY"
+        else:
+            y_scale = alt.Scale(zero=False)
+            chart_title = "Variable APY by Staking Tier (Day 1+) - Higher Participation = Lower APY"
+        
         apy_chart = alt.Chart(apy_df).mark_line(strokeWidth=3).encode(
             x=alt.X('Year:Q', title='Years'),
-            y=alt.Y('APY (%):Q', title='APY (%)', scale=alt.Scale(zero=False)),
+            y=alt.Y('APY (%):Q', title='APY (%)', scale=y_scale),
             color=alt.Color('Tier:N', 
                            scale=alt.Scale(domain=['Liquid (No Lock)', '1-Year Lock', '2-Year Lock'],
                                          range=['#87CEEB', '#32CD32', '#FF6347']),
@@ -930,33 +1014,34 @@ with tab2:
         ).properties(
             width=700, 
             height=400,
-            title="Variable APY by Staking Tier - Higher Participation = Lower APY"
+            title=chart_title
         ).resolve_scale(color='independent')
         
         st.altair_chart(apy_chart, use_container_width=True)
         
-        # Show APY statistics
+        # Show APY statistics (Day 1+ to exclude setup artifacts)
         col1, col2, col3 = st.columns(3)
         with col1:
-            liquid_max = np.max(results['apy_track'][StakingTier.LIQUID]) * 100
-            liquid_min = np.min(results['apy_track'][StakingTier.LIQUID]) * 100
+            liquid_max = np.max(results['apy_track'][StakingTier.LIQUID][1:]) * 100
+            liquid_min = np.min(results['apy_track'][StakingTier.LIQUID][1:]) * 100
             st.metric("Liquid APY Range", f"{liquid_min:.1f}%-{liquid_max:.1f}%")
         
         with col2:
-            one_yr_max = np.max(results['apy_track'][StakingTier.ONE_YEAR]) * 100
-            one_yr_min = np.min(results['apy_track'][StakingTier.ONE_YEAR]) * 100
+            one_yr_max = np.max(results['apy_track'][StakingTier.ONE_YEAR][1:]) * 100
+            one_yr_min = np.min(results['apy_track'][StakingTier.ONE_YEAR][1:]) * 100
             st.metric("1-Year APY Range", f"{one_yr_min:.1f}%-{one_yr_max:.1f}%")
         
         with col3:
-            two_yr_max = np.max(results['apy_track'][StakingTier.TWO_YEAR]) * 100
-            two_yr_min = np.min(results['apy_track'][StakingTier.TWO_YEAR]) * 100
+            two_yr_max = np.max(results['apy_track'][StakingTier.TWO_YEAR][1:]) * 100
+            two_yr_min = np.min(results['apy_track'][StakingTier.TWO_YEAR][1:]) * 100
             st.metric("2-Year APY Range", f"{two_yr_min:.1f}%-{two_yr_max:.1f}%")
         
-        # Additional Option 2 specific charts in a 2x2 grid
+        # Additional Option 2 specific charts - Reorganized to 2 columns for better visibility
+        # Row 1: Core Dynamic Metrics
         col1, col2 = st.columns(2)
         
         with col1:
-            st.subheader("🚀 Emission Schedule", help="Shows how token emissions decay over time")
+            st.subheader("Emission Schedule", help="Shows how token emissions decay over time")
             
             emission_df = pd.DataFrame({
                 'Year': years_array,
@@ -970,12 +1055,12 @@ with tab2:
             ).encode(
                 x=alt.X('Year:Q', title='Years'),
                 y=alt.Y('Annual Emission (M):Q', title='Annual Emission (M tokens)')
-            ).properties(width=350, height=300)
+            ).properties(width=400, height=300)
             
             st.altair_chart(emission_chart, use_container_width=True)
         
         with col2:
-            st.subheader("👥 Participation vs APY", help="Shows relationship between staking participation and average APY")
+            st.subheader("Participation vs APY", help="Shows relationship between staking participation and average APY")
             
             # Calculate participation percentage and average APY
             participation_pct = (results['total_staked'] / sim.C_track) * 100
@@ -1006,15 +1091,15 @@ with tab2:
             
             dual_chart = (participation_line + apy_line).resolve_scale(
                 y='independent'
-            ).properties(width=350, height=300)
+            ).properties(width=400, height=300)
             
             st.altair_chart(dual_chart, use_container_width=True)
         
-        # Create comparison of staking by tier
+        # Row 2: Tier & Market Analysis
         col3, col4 = st.columns(2)
         
         with col3:
-            st.subheader("📊 Staking by Tier", help="Shows how much is staked in each tier over time")
+            st.subheader("Staking by Tier", help="Shows how much is staked in each tier over time")
             
             tier_staking_df = pd.DataFrame({
                 'Year': np.concatenate([years_array, years_array, years_array]),
@@ -1034,12 +1119,12 @@ with tab2:
                 color=alt.Color('Tier:N', 
                                scale=alt.Scale(range=['#87CEEB', '#32CD32', '#FF6347'])),
                 order=alt.Order('Tier:N', sort='ascending')
-            ).properties(width=350, height=300)
+            ).properties(width=400, height=300)
             
             st.altair_chart(tier_chart, use_container_width=True)
         
         with col4:
-            st.subheader("💰 Token Price Evolution", help="Shows how token price changes under dynamic emissions")
+            st.subheader("Token Price Evolution", help="Shows how token price changes under dynamic emissions")
             
             # Handle price data length
             price_data = results['price_track']
@@ -1056,12 +1141,43 @@ with tab2:
             price_chart = alt.Chart(price_df).mark_line(strokeWidth=3, color='#ff7f0e').encode(
                 x=alt.X('Year:Q', title='Years'),
                 y=alt.Y('Token Price ($):Q', title='Token Price ($)', scale=alt.Scale(type='log'))
-            ).properties(width=350, height=300)
+            ).properties(width=400, height=300)
             
             st.altair_chart(price_chart, use_container_width=True)
         
+        # Row 3: Supply Analysis
+        col5, col6 = st.columns(2)
+        
+        with col5:
+            st.subheader("Staked vs Supply", help="Compares total staked tokens (solid line) against circulating supply (dashed line) over time")
+            
+            # Create supply comparison data
+            supply_comparison_df = pd.DataFrame({
+                'Year': np.concatenate([years_array, years_array]),
+                'Tokens (M)': np.concatenate([results['total_staked'] / 1e6, sim.C_track / 1e6]),
+                'Type': ['Total Staked'] * len(years_array) + ['Circulating Supply'] * len(years_array)
+            })
+            
+            supply_chart = alt.Chart(supply_comparison_df).mark_line(strokeWidth=3).encode(
+                x=alt.X('Year:Q', title='Years'),
+                y=alt.Y('Tokens (M):Q', title='Tokens (M)'),
+                color=alt.Color('Type:N', 
+                               scale=alt.Scale(domain=['Total Staked', 'Circulating Supply'], 
+                                             range=['#1f77b4', '#ff7f0e']),
+                               legend=None),
+                strokeDash=alt.StrokeDash('Type:N',
+                                         scale=alt.Scale(domain=['Total Staked', 'Circulating Supply'],
+                                                       range=[[1,0], [5,5]]))
+            ).properties(width=400, height=300)
+            
+            st.altair_chart(supply_chart, use_container_width=True)
+        
+        with col6:
+            # Add a placeholder or another useful chart here if needed
+            st.info("**Space for additional analysis**\n\nThis area could show baseline staking impact, cumulative emissions, or other dynamic metrics specific to Option 2.")
+        
         # Export section for Option 2
-        st.header("📋 Export Option 2 Results")
+        st.header("Export Option 2 Results")
         
         # Create Option 2 export data
         export_data_opt2 = {
@@ -1087,7 +1203,7 @@ with tab2:
         with col1:
             csv_opt2 = export_df_opt2.to_csv(index=False)
             st.download_button(
-                label="📥 Download Option 2 Results",
+                label="Download Option 2 Results",
                 data=csv_opt2,
                 file_name=f"dpos_option2_dynamic_emissions.csv",
                 mime="text/csv",
@@ -1123,7 +1239,7 @@ with tab2:
             summary_csv_opt2 = summary_df_opt2.to_csv(index=False)
             
             st.download_button(
-                label="📋 Download Option 2 Summary",
+                label="Download Option 2 Summary",
                 data=summary_csv_opt2,
                 file_name=f"option2_summary_dynamic_emissions.csv", 
                 mime="text/csv",
@@ -1131,7 +1247,7 @@ with tab2:
             )
         
         # Data Preview
-        st.subheader("📊 Option 2 Data Preview")
+        st.subheader("Option 2 Data Preview")
         show_full_table_opt2 = st.checkbox("Show complete Option 2 time series", value=False)
         
         if show_full_table_opt2:
@@ -1143,10 +1259,10 @@ with tab2:
             st.info(f"Showing quarterly snapshots. Check 'Show complete Option 2 time series' to see all {len(export_df_opt2)} data points.")
             
     else:
-        st.info("👈 Configure Option 2 parameters and click 'Run Option 2 Simulation' to see results!")
+        st.info("Configure Option 2 parameters and click 'Run Option 2 Simulation' to see results!")
         
         # Show current configuration
-        st.subheader("⚙️ Current Option 2 Configuration")
+        st.subheader("Current Option 2 Configuration")
         st.write("**Current Option 2 Settings:**")
         st.write(f"• Liquid Multiplier: {liquid_multiplier}x")
         st.write(f"• 1-Year Multiplier: {one_year_multiplier}x") 
@@ -1155,8 +1271,8 @@ with tab2:
         st.write(f"• Decay Rate: {k}")
         
         st.markdown("**Key differences from Option 1:**")
-        st.markdown("• 📈 **Variable APY**: APY changes based on total staking participation")
-        st.markdown("• 🔄 **Dynamic Rewards**: Higher participation = lower APY for everyone") 
-        st.markdown("• 📉 **Decaying Emissions**: Emission schedule determines total rewards available")
-        st.markdown("• 🌱 **Sustainable**: More economically sustainable but less predictable returns")
-        st.markdown("• ⚖️ **Self-Balancing**: System naturally balances participation vs rewards")
+        st.markdown("• **Variable APY**: APY changes based on total staking participation")
+        st.markdown("• **Dynamic Rewards**: Higher participation = lower APY for everyone") 
+        st.markdown("• **Decaying Emissions**: Emission schedule determines total rewards available")
+        st.markdown("• **Sustainable**: More economically sustainable but less predictable returns")
+        st.markdown("• **Self-Balancing**: System naturally balances participation vs rewards")
