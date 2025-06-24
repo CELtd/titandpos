@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import altair as alt
 import numpy as np
+import matplotlib.pyplot as plt
 
 # Import our simulation classes
 from sim import DPoSSimulation, SimulationParams, StakingTier
@@ -239,8 +240,6 @@ with tab1:
         
         # Optimized simulation parameters
         time_step = 1  # Daily for accuracy
-        fast_mode = False  
-        vectorized = True
         
         # Create parameters with sentiment-based approach
         params = SimulationParams(
@@ -276,8 +275,6 @@ with tab1:
             market_drift=market_drift,
             market_volatility=market_volatility,
             time_step=time_step,
-            fast_mode=fast_mode,
-            vectorized=vectorized,
             multipliers={
                 StakingTier.LIQUID: liquid_mult,
                 StakingTier.ONE_YEAR: one_year_mult,
@@ -809,8 +806,6 @@ with tab2:
         
         # Optimized simulation parameters
         time_step = 1  # Daily for accuracy
-        fast_mode = False  
-        vectorized = True
         
         # Create parameters with sentiment-based approach for Option 2
         params = SimulationParams(
@@ -847,8 +842,6 @@ with tab2:
             market_drift=market_drift,
             market_volatility=market_volatility,
             time_step=time_step,
-            fast_mode=fast_mode,
-            vectorized=vectorized,
             multipliers={
                 StakingTier.LIQUID: liquid_multiplier,
                 StakingTier.ONE_YEAR: one_year_multiplier,
@@ -1175,6 +1168,174 @@ with tab2:
         with col6:
             # Add a placeholder or another useful chart here if needed
             st.info("**Space for additional analysis**\n\nThis area could show baseline staking impact, cumulative emissions, or other dynamic metrics specific to Option 2.")
+        
+        # NEW SECTION: Option 2 APY Explanation Plots
+        st.header("Option 2 APY Explanation")
+        st.markdown("""
+        **Why is the initial APY so high?** These plots explain the mathematical relationship between emission, 
+        total stake, and individual APY. The high initial APY is mathematically correct and represents 
+        the incentive for early adopters.
+        """)
+        
+        # Create explanation plots using matplotlib (since they're more complex)
+        
+        # Plot 1: Emission vs Total Stake (The Key Relationship)
+        fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+        days = np.arange(params.T)
+        emission_daily = params.E0 * np.exp(-params.k * days / 365) / 365  # Convert annual to daily
+        weighted_stake = results.get('weighted_stake', np.zeros(params.T))
+        
+        # Plot 1: Emission vs Total Weighted Stake
+        scatter = axes[0, 0].scatter(weighted_stake / 1e6, emission_daily / 1e3, 
+                                   c=days, cmap='viridis', alpha=0.7, s=20)
+        axes[0, 0].set_xlabel('Total Weighted Stake (M tokens)')
+        axes[0, 0].set_ylabel('Daily Emission (K tokens/day)')
+        axes[0, 0].set_title('Emission vs Total Stake\n(Key APY Driver)')
+        axes[0, 0].grid(True, alpha=0.3)
+        
+        # Add colorbar
+        cbar = plt.colorbar(scatter, ax=axes[0, 0])
+        cbar.set_label('Days')
+        
+        # Add annotation for high APY region
+        if len(weighted_stake) > 0 and len(emission_daily) > 0:
+            axes[0, 0].annotate('High APY\n(Low stake, high emission)', 
+                               xy=(weighted_stake[0]/1e6, emission_daily[0]/1e3),
+                               xytext=(weighted_stake[0]/1e6 + 50, emission_daily[0]/1e3 + 50),
+                               arrowprops=dict(arrowstyle='->', color='red'),
+                               fontsize=10, color='red')
+        
+        # Plot 2: APY vs Participation Rate (Inverse Relationship)
+        market_participation_pct = (results['total_staked'] / sim.C_track) * 100
+        base_apy = results['apy_track'][StakingTier.LIQUID] * 100
+        
+        axes[0, 1].plot(market_participation_pct, base_apy, 'b-', linewidth=2, alpha=0.8)
+        axes[0, 1].set_xlabel('Market Participation Rate (%)')
+        axes[0, 1].set_ylabel('Base APY (%)')
+        axes[0, 1].set_title('APY vs Participation Rate\n(Inverse Relationship)')
+        axes[0, 1].grid(True, alpha=0.3)
+        
+        # Add annotations for key points
+        if len(base_apy) > 0 and len(market_participation_pct) > 0:
+            axes[0, 1].annotate(f'Day 0: {base_apy[0]:.0f}% APY\n{market_participation_pct[0]:.1f}% participation', 
+                               xy=(market_participation_pct[0], base_apy[0]),
+                               xytext=(market_participation_pct[0] + 5, base_apy[0] - 200),
+                               arrowprops=dict(arrowstyle='->', color='red'),
+                               fontsize=9, color='red')
+            
+            # Find a point around day 365 for comparison
+            day_365_idx = min(365, len(base_apy) - 1)
+            axes[0, 1].annotate(f'Day 365: {base_apy[day_365_idx]:.1f}% APY\n{market_participation_pct[day_365_idx]:.1f}% participation', 
+                               xy=(market_participation_pct[day_365_idx], base_apy[day_365_idx]),
+                               xytext=(market_participation_pct[day_365_idx] - 5, base_apy[day_365_idx] + 50),
+                               arrowprops=dict(arrowstyle='->', color='green'),
+                               fontsize=9, color='green')
+        
+        # Plot 3: Daily Rewards per Staked Token
+        daily_rewards_per_token = np.zeros(params.T)
+        for t in range(params.T):
+            if weighted_stake[t] > 0:
+                daily_rewards_per_token[t] = emission_daily[t] / weighted_stake[t]
+        
+        axes[0, 2].plot(days, daily_rewards_per_token * 100, 'purple', linewidth=2)
+        axes[0, 2].set_xlabel('Days')
+        axes[0, 2].set_ylabel('Daily Rewards per Staked Token (%)')
+        axes[0, 2].set_title('Daily Rewards per Staked Token\n(Individual Reward Rate)')
+        axes[0, 2].grid(True, alpha=0.3)
+        
+        # Add annotation for initial high rewards
+        if len(daily_rewards_per_token) > 0 and daily_rewards_per_token[0] > 0:
+            axes[0, 2].annotate(f'Day 0: {daily_rewards_per_token[0]*100:.2f}% daily\n({daily_rewards_per_token[0]*365*100:.0f}% annualized)', 
+                               xy=(0, daily_rewards_per_token[0] * 100),
+                               xytext=(30, daily_rewards_per_token[0] * 100 + 0.5),
+                               arrowprops=dict(arrowstyle='->', color='red'),
+                               fontsize=9, color='red')
+        
+        # Plot 4: APY Components Breakdown
+        for tier in [StakingTier.LIQUID, StakingTier.ONE_YEAR, StakingTier.TWO_YEAR]:
+            tier_apy = results['apy_track'][tier] * 100
+            multiplier = params.multipliers[tier]
+            axes[1, 0].plot(days, tier_apy, 
+                          label=f'{tier.value} ({multiplier}x)', 
+                          linewidth=2, alpha=0.8)
+        
+        axes[1, 0].set_xlabel('Days')
+        axes[1, 0].set_ylabel('APY (%)')
+        axes[1, 0].set_title('APY by Tier\n(Individual Participant APY)')
+        axes[1, 0].legend()
+        axes[1, 0].grid(True, alpha=0.3)
+        
+        # Add annotation explaining these are individual APYs
+        if len(days) > 0 and len(results['apy_track'][StakingTier.TWO_YEAR]) > 0:
+            mid_point = len(days) // 2
+            axes[1, 0].annotate('These are INDIVIDUAL APYs\nthat each participant earns', 
+                               xy=(days[mid_point], results['apy_track'][StakingTier.TWO_YEAR][mid_point] * 100),
+                               xytext=(days[mid_point] - 100, results['apy_track'][StakingTier.TWO_YEAR][mid_point] * 100 + 200),
+                               arrowprops=dict(arrowstyle='->', color='blue'),
+                               fontsize=10, color='blue',
+                               bbox=dict(boxstyle="round,pad=0.3", facecolor="yellow", alpha=0.7))
+        
+        # Plot 5: Early vs Late Participant APY Comparison
+        early_participant_apy = np.zeros(params.T)
+        late_participant_apy = np.zeros(params.T)
+        
+        for t in range(params.T):
+            if weighted_stake[t] > 0:
+                base_daily_yield = emission_daily[t] / weighted_stake[t]
+                early_participant_apy[t] = base_daily_yield * params.multipliers[StakingTier.TWO_YEAR] * 365 * 100
+                
+                # Late participant gets the same base yield but stakes later
+                if t > 750:  # After ~2 years (750 days) when emissions are much lower
+                    late_participant_apy[t] = early_participant_apy[t]
+        
+        axes[1, 1].plot(days, early_participant_apy, 'green', linewidth=2, label='Early Participant (Day 0)')
+        axes[1, 1].plot(days, late_participant_apy, 'red', linewidth=2, label='Late Participant (Day 750+)')
+        axes[1, 1].set_xlabel('Days')
+        axes[1, 1].set_ylabel('APY (%)')
+        axes[1, 1].set_title('Early vs Late Participant APY\n(2-Year Tier)')
+        axes[1, 1].legend()
+        axes[1, 1].grid(True, alpha=0.3)
+        
+        # Add annotation for the difference
+        if early_participant_apy[0] > 0 and len(late_participant_apy) > 750 and late_participant_apy[750] > 0:
+            apy_diff = early_participant_apy[0] - late_participant_apy[750]
+            axes[1, 1].annotate(f'APY Difference:\n{apy_diff:.0f}% higher for early participant', 
+                               xy=(375, (early_participant_apy[0] + late_participant_apy[750]) / 2),
+                               xytext=(500, (early_participant_apy[0] + late_participant_apy[750]) / 2 + 200),
+                               arrowprops=dict(arrowstyle='->', color='purple'),
+                               fontsize=10, color='purple',
+                               bbox=dict(boxstyle="round,pad=0.3", facecolor="lightblue", alpha=0.7))
+        
+        # Hide the unused subplot (axes[1, 2])
+        axes[1, 2].set_visible(False)
+        
+        plt.tight_layout()
+        st.pyplot(fig)
+        
+        # Add explanation text
+        st.markdown("""
+        ### Key Insights:
+        
+        **1. High Initial APY is Mathematically Correct**
+        - On Day 0, there's only baseline staking (10M tokens) but full emission (100M tokens/year)
+        - APY = Emission ÷ Total Stake = 100M ÷ 10M = 1,000%+ base APY
+        - This creates a strong incentive for early adopters
+        
+        **2. APY Decreases as Participation Increases**
+        - More people staking = same emission divided among more stake
+        - This is the natural equilibrium mechanism
+        - Early participants get higher rewards than late participants
+        
+        **3. Individual vs Aggregate Perspective**
+        - The APY shown is what **each individual participant** earns
+        - It's not an average or cohort APY
+        - Each staker gets the same rate on their staked tokens
+        
+        **4. The Incentive Mechanism**
+        - High initial APY attracts participants
+        - As more people join, APY decreases
+        - This creates a self-balancing system
+        """)
         
         # Export section for Option 2
         st.header("Export Option 2 Results")

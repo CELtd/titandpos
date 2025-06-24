@@ -54,8 +54,8 @@ class SimulationParams:
     bullish_price_expectation: float = 0.5  # 50% annual price expectation
     
     # Performance parameters
-    fast_mode: bool = False  # NEW: Enable fast mode optimizations
-    vectorized: bool = True  # NEW: Use vectorized calculations when possible
+    # fast_mode: bool = False  # NEW: Enable fast mode optimizations
+    # vectorized: bool = True  # NEW: Use vectorized calculations when possible
     
     # Supply parameters
     C0: float = 50e6      # Initial circulating supply (50M tokens)
@@ -68,11 +68,8 @@ class SimulationParams:
     holdings_scale_with_agents: bool = True  # NEW: If True, fewer agents = proportionally less total holdings
     max_stake_ratio: float = 0.8  # NEW: Maximum % of holdings each agent will stake (keep 20% liquid)
     
-    # Stake distribution
-    stake_per_agent_ratio: float = 0.001  # Each agent stakes 0.1% of circulating supply on average
-    
-    # Supply parameters
-    C0: float = 1e9       # Initial circulating supply
+    # # Supply parameters
+    # C0: float = 1e9       # Initial circulating supply
     
     # Price model parameters (GBM)
     initial_price: float = 0.1       # Starting token price
@@ -100,10 +97,10 @@ class SimulationParams:
         if self.time_step > 1:
             self.daily_vesting *= self.time_step  # Scale vesting for larger time steps
             
-        # Fast mode adjustments
-        if self.fast_mode:
-            self.N = min(self.N, 1000)  # Cap agents at 1000 for fast mode
-            self.time_step = max(self.time_step, 7)  # Minimum weekly simulation
+        # # Fast mode adjustments
+        # if self.fast_mode:
+        #     self.N = min(self.N, 1000)  # Cap agents at 1000 for fast mode
+        #     self.time_step = max(self.time_step, 7)  # Minimum weekly simulation
 
 class DPoSSimulation:
     def __init__(self, params: SimulationParams):
@@ -314,29 +311,29 @@ class DPoSSimulation:
         
         return max(final_price, 0.01)  # Prevent negative prices
         
-    def calculate_agent_utility(self, tier: StakingTier, daily_yield: float, t: int) -> np.ndarray:
-        """Calculate utility for each agent for a given tier"""
-        duration = self.params.durations[tier]
-        # Convert annual illiquidity cost to daily
-        daily_illiquidity_cost = self.lambda_agent * duration / self.params.E
+    # def calculate_agent_utility(self, tier: StakingTier, daily_yield: float, t: int) -> np.ndarray:
+    #     """Calculate utility for each agent for a given tier"""
+    #     duration = self.params.durations[tier]
+    #     # Convert annual illiquidity cost to daily
+    #     daily_illiquidity_cost = self.lambda_agent * duration / self.params.E
         
-        # Use individual agent price expectations (converted to daily)
-        daily_price_expectations = np.zeros(self.params.N)
-        if daily_yield > 0:  # Only apply price appreciation if there are staking rewards
-            daily_price_expectations = self.price_expectations / 365  # Convert annual to daily
+    #     # Use individual agent price expectations (converted to daily)
+    #     daily_price_expectations = np.zeros(self.params.N)
+    #     if daily_yield > 0:  # Only apply price appreciation if there are staking rewards
+    #         daily_price_expectations = self.price_expectations / 365  # Convert annual to daily
         
-        # Agents consider both yield AND their individual expected token appreciation
-        total_expected_return = daily_yield + daily_price_expectations
+    #     # Agents consider both yield AND their individual expected token appreciation
+    #     total_expected_return = daily_yield + daily_price_expectations
         
-        # Net utility after illiquidity cost
-        utility = total_expected_return - daily_illiquidity_cost
+    #     # Net utility after illiquidity cost
+    #     utility = total_expected_return - daily_illiquidity_cost
         
-        # Add small noise if there are actual rewards
-        if daily_yield > 0:
-            noise = np.random.normal(0, 0.0001, len(self.lambda_agent))
-            utility = utility + noise
+    #     # Add small noise if there are actual rewards
+    #     if daily_yield > 0:
+    #         noise = np.random.normal(0, 0.0001, len(self.lambda_agent))
+    #         utility = utility + noise
         
-        return utility
+    #     return utility
         
     def calculate_agent_utility_vectorized(self, daily_yields: Dict[StakingTier, float], t: int) -> Dict[StakingTier, np.ndarray]:
         """Vectorized utility calculation for all agents and tiers at once"""
@@ -359,7 +356,7 @@ class DPoSSimulation:
             utilities[tier] = total_expected_return - daily_illiquidity_cost
             
             # Add noise if there are actual rewards and not in fast mode
-            if daily_yield > 0 and not self.params.fast_mode:
+            if daily_yield > 0:
                 noise = np.random.normal(0, 0.0001, self.params.N)
                 utilities[tier] += noise
                 
@@ -409,7 +406,9 @@ class DPoSSimulation:
             tier_agents_mask = (best_tier_indices == tier_idx) & should_stake_mask
             
             if np.any(tier_agents_mask):
-                demand[tier] = np.sum(available_tokens[tier_agents_mask])
+                # FIX: Apply max_stake_ratio - agents only stake a portion of their holdings
+                agent_stake_amounts = available_tokens[tier_agents_mask] * self.params.max_stake_ratio
+                demand[tier] = np.sum(agent_stake_amounts)
                 agent_count[tier] = np.sum(tier_agents_mask)
         
         unstaking_agents = self.params.N - np.sum(should_stake_mask)
@@ -422,14 +421,14 @@ class DPoSSimulation:
     
     def simulate_option1(self, debug=False) -> Dict:
         """Simulate Option 1: Fixed budget with static APYs"""
-        if debug:
-            print("Simulating Option 1: Fixed Budget")
-            if self.params.time_step > 1:
-                print(f"Using time step: {self.params.time_step} days")
-            if self.params.vectorized:
-                print("Using vectorized calculations")
-            if self.params.fast_mode:
-                print("Fast mode enabled")
+        # if debug:
+        #     print("Simulating Option 1: Fixed Budget")
+        #     if self.params.time_step > 1:
+        #         print(f"Using time step: {self.params.time_step} days")
+        #     if self.params.vectorized:
+        #         print("Using vectorized calculations")
+        #     if self.params.fast_mode:
+        #         print("Fast mode enabled")
         
         # Initialize
         B_current = self.params.B0
@@ -478,42 +477,42 @@ class DPoSSimulation:
                 print(f"Agent holdings: min={self.agent_holdings_track[:, t].min()/1e3:.1f}K, max={self.agent_holdings_track[:, t].max()/1e6:.1f}M, total={self.agent_holdings_track[:, t].sum()/1e6:.1f}M")
             
             # Agent decision making - USE VECTORIZED VERSION
-            if self.params.vectorized:
-                decision_results = self.make_agent_decisions_vectorized(daily_yields, t)
-                demand = decision_results['demand']
-                agent_count = decision_results['agent_count']
-                unstaking_agents = decision_results['unstaking_agents']
-            else:
-                # Fallback to original (slower) method
-                demand = {tier: 0.0 for tier in self.tiers}
-                agent_count = {tier: 0 for tier in self.tiers}
-                unstaking_agents = 0
+            # if self.params.vectorized:
+            decision_results = self.make_agent_decisions_vectorized(daily_yields, t)
+            demand = decision_results['demand']
+            agent_count = decision_results['agent_count']
+            unstaking_agents = decision_results['unstaking_agents']
+            # else:
+            #     # Fallback to original (slower) method
+            #     demand = {tier: 0.0 for tier in self.tiers}
+            #     agent_count = {tier: 0 for tier in self.tiers}
+            #     unstaking_agents = 0
                 
-                for i in range(self.params.N):
-                    available_tokens = self.agent_holdings_track[i, t]
+            #     for i in range(self.params.N):
+            #         available_tokens = self.agent_holdings_track[i, t]
                     
-                    if available_tokens <= 0:
-                        continue
+            #         if available_tokens <= 0:
+            #             continue
                     
-                    utilities = {}
-                    for tier in self.tiers:
-                        utilities[tier] = self.calculate_agent_utility(tier, daily_yields[tier], t)[i]
+            #         utilities = {}
+            #         for tier in self.tiers:
+            #             utilities[tier] = self.calculate_agent_utility(tier, daily_yields[tier], t)[i]
                     
-                    best_tier = max(utilities.keys(), key=lambda x: utilities[x])
-                    best_staking_utility = utilities[best_tier]
+            #         best_tier = max(utilities.keys(), key=lambda x: utilities[x])
+            #         best_staking_utility = utilities[best_tier]
                     
-                    # FIX: Compare against utility of NOT staking (which is 0)
-                    utility_not_staking = 0.0
+            #         # FIX: Compare against utility of NOT staking (which is 0)
+            #         utility_not_staking = 0.0
                     
-                    # Only stake if staking utility exceeds hurdle rate AND is better than not staking
-                    if (best_staking_utility >= self.delta[i] and 
-                        best_staking_utility > utility_not_staking):
-                        # FIX: Agents only stake a portion of their holdings (keep some liquid)
-                        stake_amount = available_tokens * self.params.max_stake_ratio
-                        demand[best_tier] += stake_amount
-                        agent_count[best_tier] += 1
-                    else:
-                        unstaking_agents += 1
+            #         # Only stake if staking utility exceeds hurdle rate AND is better than not staking
+            #         if (best_staking_utility >= self.delta[i] and 
+            #             best_staking_utility > utility_not_staking):
+            #             # FIX: Agents only stake a portion of their holdings (keep some liquid)
+            #             stake_amount = available_tokens * self.params.max_stake_ratio
+            #             demand[best_tier] += stake_amount
+            #             agent_count[best_tier] += 1
+            #         else:
+            #             unstaking_agents += 1
             
             # Cap demand to available agent holdings (can't stake more than they own!)
             total_demand = sum(demand.values())
@@ -589,14 +588,14 @@ class DPoSSimulation:
     
     def simulate_option2(self, debug=False) -> Dict:
         """Simulate Option 2: Decaying emission with dynamic APYs"""
-        if debug:
-            print("Simulating Option 2: Dynamic Emissions")
-            if self.params.time_step > 1:
-                print(f"Using time step: {self.params.time_step} days")
-            if self.params.vectorized:
-                print("Using vectorized calculations")
-            if self.params.fast_mode:
-                print("Fast mode enabled")
+        # if debug:
+        #     print("Simulating Option 2: Dynamic Emissions")
+        #     if self.params.time_step > 1:
+        #         print(f"Using time step: {self.params.time_step} days")
+        #     if self.params.vectorized:
+        #         print("Using vectorized calculations")
+        #     if self.params.fast_mode:
+        #         print("Fast mode enabled")
         
         # Reset tracking for clean comparison
         self.setup_tracking()
@@ -638,48 +637,48 @@ class DPoSSimulation:
                 self.apy_track[tier][t] = daily_yields[tier] * 365
             
             # Agent decision making - USE VECTORIZED VERSION LIKE OPTION 1
-            if self.params.vectorized:
-                decision_results = self.make_agent_decisions_vectorized(daily_yields, t)
-                demand = decision_results['demand']
-                agent_count = decision_results['agent_count']
-                unstaking_agents = decision_results['unstaking_agents']
-            else:
-                # Fallback to original (slower) method
-                demand = {tier: 0.0 for tier in self.tiers}  # Now tracks total stake demand, not agent count
-                agent_count = {tier: 0 for tier in self.tiers}  # Track agent count for debugging
-                utilities_debug = {tier: [] for tier in self.tiers}
+            # if self.params.vectorized:
+            decision_results = self.make_agent_decisions_vectorized(daily_yields, t)
+            demand = decision_results['demand']
+            agent_count = decision_results['agent_count']
+            unstaking_agents = decision_results['unstaking_agents']
+            # else:
+            #     # Fallback to original (slower) method
+            #     demand = {tier: 0.0 for tier in self.tiers}  # Now tracks total stake demand, not agent count
+            #     agent_count = {tier: 0 for tier in self.tiers}  # Track agent count for debugging
+            #     utilities_debug = {tier: [] for tier in self.tiers}
                 
-                # Track agents who decide to unstake (new feature)
-                unstaking_agents = 0
+            #     # Track agents who decide to unstake (new feature)
+            #     unstaking_agents = 0
                 
-                for i in range(self.params.N):
-                    available_tokens = self.agent_holdings_track[i, t]
+            #     for i in range(self.params.N):
+            #         available_tokens = self.agent_holdings_track[i, t]
                     
-                    if available_tokens <= 0:
-                        continue  # Agent has no tokens to stake
+            #         if available_tokens <= 0:
+            #             continue  # Agent has no tokens to stake
                     
-                    utilities = {}
-                    for tier in self.tiers:
-                        utilities[tier] = self.calculate_agent_utility(tier, daily_yields[tier], t)[i]
-                        if debug and t == 0 and i < 5:  # Debug first 5 agents on first day
-                            utilities_debug[tier].append(utilities[tier])
+            #         utilities = {}
+            #         for tier in self.tiers:
+            #             utilities[tier] = self.calculate_agent_utility(tier, daily_yields[tier], t)[i]
+            #             if debug and t == 0 and i < 5:  # Debug first 5 agents on first day
+            #                 utilities_debug[tier].append(utilities[tier])
                     
-                    # Choose best tier if utility exceeds hurdle rate
-                    best_tier = max(utilities.keys(), key=lambda x: utilities[x])
-                    best_utility = utilities[best_tier]
+            #         # Choose best tier if utility exceeds hurdle rate
+            #         best_tier = max(utilities.keys(), key=lambda x: utilities[x])
+            #         best_utility = utilities[best_tier]
                     
-                    # FIX: More dynamic staking behavior
-                    # Only stake if utility is positive AND exceeds hurdle rate
-                    # This makes agents more responsive to changing conditions
-                    if best_utility >= self.delta[i] and best_utility >= 0:
-                        # FIX: Stake only a portion of available tokens (keep some liquid)
-                        stake_amount = available_tokens * self.params.max_stake_ratio
-                        demand[best_tier] += stake_amount
-                        agent_count[best_tier] += 1
-                    else:
-                        # Agent chooses not to stake (keeps tokens liquid)
-                        # This creates more realistic, dynamic behavior
-                        unstaking_agents += 1
+            #         # FIX: More dynamic staking behavior
+            #         # Only stake if utility is positive AND exceeds hurdle rate
+            #         # This makes agents more responsive to changing conditions
+            #         if best_utility >= self.delta[i] and best_utility >= 0:
+            #             # FIX: Stake only a portion of available tokens (keep some liquid)
+            #             stake_amount = available_tokens * self.params.max_stake_ratio
+            #             demand[best_tier] += stake_amount
+            #             agent_count[best_tier] += 1
+            #         else:
+            #             # Agent chooses not to stake (keeps tokens liquid)
+            #             # This creates more realistic, dynamic behavior
+            #             unstaking_agents += 1
             
             # Cap demand to available agent holdings (can't stake more than they own!)
             total_demand = sum(demand.values())
@@ -692,11 +691,11 @@ class DPoSSimulation:
                     print(f"  {tier.value}: {daily_yields[tier]:.6f} (APY: {self.apy_track[tier][t]:.2%})")
                 print(f"Agent holdings: min={self.agent_holdings_track[:, t].min()/1e3:.1f}K, max={self.agent_holdings_track[:, t].max()/1e6:.1f}M, total={self.agent_holdings_track[:, t].sum()/1e6:.1f}M")
                 
-                # Only show utilities debug if not using vectorized mode
-                if not self.params.vectorized:
-                    print("Sample agent utilities (first 5 agents):")
-                    for tier in self.tiers:
-                        print(f"  {tier.value}: {utilities_debug[tier]}")
+                # # Only show utilities debug if not using vectorized mode
+                # if not self.params.vectorized:
+                #     print("Sample agent utilities (first 5 agents):")
+                #     for tier in self.tiers:
+                #         print(f"  {tier.value}: {utilities_debug[tier]}")
                 
                 print(f"Total stake demand: {sum(demand.values())/1e6:.1f}M tokens")
                 print(f"Agent participation by tier:")
@@ -916,6 +915,209 @@ class DPoSSimulation:
         
         return df
 
+    def plot_option2_explanation(self, results: Dict, title_prefix: str = ""):
+        """Create additional plots specifically for Option 2 to explain APY dynamics"""
+        fig, axes = plt.subplots(3, 2, figsize=(18, 15))
+        days = np.arange(self.params.T)
+        
+        # Plot 1: Emission vs Total Weighted Stake (The Key Relationship)
+        emission_daily = self.params.E0 * np.exp(-self.params.k * days / 365) / 365  # Convert annual to daily
+        weighted_stake = results.get('weighted_stake', np.zeros(self.params.T))
+        
+        # Create a scatter plot showing the relationship
+        axes[0, 0].scatter(weighted_stake / 1e6, emission_daily / 1e3, 
+                          c=days, cmap='viridis', alpha=0.7, s=20)
+        axes[0, 0].set_xlabel('Total Weighted Stake (M tokens)')
+        axes[0, 0].set_ylabel('Daily Emission (K tokens/day)')
+        axes[0, 0].set_title(f'{title_prefix}Emission vs Total Stake\n(Key APY Driver)')
+        axes[0, 0].grid(True, alpha=0.3)
+        
+        # Add colorbar to show time progression
+        scatter = axes[0, 0].scatter([], [], c=[], cmap='viridis')
+        cbar = plt.colorbar(scatter, ax=axes[0, 0])
+        cbar.set_label('Days')
+        
+        # Add annotation for high APY region
+        axes[0, 0].annotate('High APY\n(Low stake, high emission)', 
+                           xy=(weighted_stake[0]/1e6, emission_daily[0]/1e3),
+                           xytext=(weighted_stake[0]/1e6 + 50, emission_daily[0]/1e3 + 50),
+                           arrowprops=dict(arrowstyle='->', color='red'),
+                           fontsize=10, color='red')
+        
+        # Plot 2: APY vs Participation Rate (Inverse Relationship)
+        market_participation_pct = (results['total_staked'] / self.C_track) * 100
+        base_apy = results['apy_track'][StakingTier.LIQUID] * 100  # Use liquid tier as base
+        
+        axes[0, 1].plot(market_participation_pct, base_apy, 'b-', linewidth=2, alpha=0.8)
+        axes[0, 1].set_xlabel('Market Participation Rate (%)')
+        axes[0, 1].set_ylabel('Base APY (%)')
+        axes[0, 1].set_title(f'{title_prefix}APY vs Participation Rate\n(Inverse Relationship)')
+        axes[0, 1].grid(True, alpha=0.3)
+        
+        # Add annotations for key points
+        axes[0, 1].annotate(f'Day 0: {base_apy[0]:.0f}% APY\n{market_participation_pct[0]:.1f}% participation', 
+                           xy=(market_participation_pct[0], base_apy[0]),
+                           xytext=(market_participation_pct[0] + 5, base_apy[0] - 200),
+                           arrowprops=dict(arrowstyle='->', color='red'),
+                           fontsize=9, color='red')
+        
+        # Find a point around day 365 for comparison
+        day_365_idx = min(365, len(base_apy) - 1)
+        axes[0, 1].annotate(f'Day 365: {base_apy[day_365_idx]:.1f}% APY\n{market_participation_pct[day_365_idx]:.1f}% participation', 
+                           xy=(market_participation_pct[day_365_idx], base_apy[day_365_idx]),
+                           xytext=(market_participation_pct[day_365_idx] - 5, base_apy[day_365_idx] + 50),
+                           arrowprops=dict(arrowstyle='->', color='green'),
+                           fontsize=9, color='green')
+        
+        # Plot 3: Daily Rewards per Staked Token
+        daily_rewards_per_token = np.zeros(self.params.T)
+        for t in range(self.params.T):
+            if weighted_stake[t] > 0:
+                daily_rewards_per_token[t] = emission_daily[t] / weighted_stake[t]
+        
+        axes[0, 2].plot(days, daily_rewards_per_token * 100, 'purple', linewidth=2)
+        axes[0, 2].set_xlabel('Days')
+        axes[0, 2].set_ylabel('Daily Rewards per Staked Token (%)')
+        axes[0, 2].set_title(f'{title_prefix}Daily Rewards per Staked Token\n(Shows Individual Reward Rate)')
+        axes[0, 2].grid(True, alpha=0.3)
+        
+        # Add annotation for initial high rewards
+        axes[0, 2].annotate(f'Day 0: {daily_rewards_per_token[0]*100:.2f}% daily\n({daily_rewards_per_token[0]*365*100:.0f}% annualized)', 
+                           xy=(0, daily_rewards_per_token[0] * 100),
+                           xytext=(30, daily_rewards_per_token[0] * 100 + 0.5),
+                           arrowprops=dict(arrowstyle='->', color='red'),
+                           fontsize=9, color='red')
+        
+        # Plot 4: APY Components Breakdown
+        # Show base APY vs tier APYs
+        for tier in self.tiers:
+            tier_apy = results['apy_track'][tier] * 100
+            axes[1, 0].plot(days, tier_apy, 
+                          label=f'{tier.value} ({self.params.multipliers[tier]}x)', 
+                          linewidth=2, alpha=0.8)
+        
+        axes[1, 0].set_xlabel('Days')
+        axes[1, 0].set_ylabel('APY (%)')
+        axes[1, 0].set_title(f'{title_prefix}APY by Tier\n(Individual Participant APY)')
+        axes[1, 0].legend()
+        axes[1, 0].grid(True, alpha=0.3)
+        
+        # Add annotation explaining these are individual APYs
+        axes[1, 0].annotate('These are INDIVIDUAL APYs\nthat each participant earns', 
+                           xy=(days[len(days)//2], results['apy_track'][StakingTier.TWO_YEAR][len(days)//2] * 100),
+                           xytext=(days[len(days)//2] - 100, results['apy_track'][StakingTier.TWO_YEAR][len(days)//2] * 100 + 200),
+                           arrowprops=dict(arrowstyle='->', color='blue'),
+                           fontsize=10, color='blue',
+                           bbox=dict(boxstyle="round,pad=0.3", facecolor="yellow", alpha=0.7))
+        
+        # Plot 5: Early vs Late Participant APY Comparison
+        # Simulate what APY would be if someone stakes at different times
+        early_participant_apy = np.zeros(self.params.T)
+        late_participant_apy = np.zeros(self.params.T)
+        
+        for t in range(self.params.T):
+            if weighted_stake[t] > 0:
+                base_daily_yield = emission_daily[t] / weighted_stake[t]
+                early_participant_apy[t] = base_daily_yield * self.params.multipliers[StakingTier.TWO_YEAR] * 365 * 100
+                
+                # Late participant gets the same base yield but stakes later
+                if t > 30:  # After 30 days
+                    late_participant_apy[t] = early_participant_apy[t]
+        
+        axes[1, 1].plot(days, early_participant_apy, 'green', linewidth=2, label='Early Participant (Day 0)')
+        axes[1, 1].plot(days, late_participant_apy, 'red', linewidth=2, label='Late Participant (Day 30+)')
+        axes[1, 1].set_xlabel('Days')
+        axes[1, 1].set_ylabel('APY (%)')
+        axes[1, 1].set_title(f'{title_prefix}Early vs Late Participant APY\n(2-Year Tier)')
+        axes[1, 1].legend()
+        axes[1, 1].grid(True, alpha=0.3)
+        
+        # Add annotation for the difference
+        if early_participant_apy[0] > 0 and late_participant_apy[30] > 0:
+            apy_diff = early_participant_apy[0] - late_participant_apy[30]
+            axes[1, 1].annotate(f'APY Difference:\n{apy_diff:.0f}% higher for early participant', 
+                               xy=(15, (early_participant_apy[0] + late_participant_apy[30]) / 2),
+                               xytext=(50, (early_participant_apy[0] + late_participant_apy[30]) / 2 + 200),
+                               arrowprops=dict(arrowstyle='->', color='purple'),
+                               fontsize=10, color='purple',
+                               bbox=dict(boxstyle="round,pad=0.3", facecolor="lightblue", alpha=0.7))
+        
+        # Plot 6: APY Decay Components
+        # Show emission decay vs stake growth effects
+        emission_decay_factor = np.exp(-self.params.k * days / 365)
+        stake_growth_factor = weighted_stake / weighted_stake[0] if weighted_stake[0] > 0 else np.ones_like(weighted_stake)
+        
+        # Calculate what APY would be if only emission decayed (no stake growth)
+        apy_emission_only = results['apy_track'][StakingTier.LIQUID][0] * emission_decay_factor * 100
+        
+        # Calculate what APY would be if only stake grew (no emission decay)
+        apy_stake_only = results['apy_track'][StakingTier.LIQUID][0] / stake_growth_factor * 100
+        
+        # Actual APY (both effects)
+        actual_apy = results['apy_track'][StakingTier.LIQUID] * 100
+        
+        axes[1, 2].plot(days, apy_emission_only, 'orange', linewidth=2, label='Emission Decay Only', alpha=0.7)
+        axes[1, 2].plot(days, apy_stake_only, 'blue', linewidth=2, label='Stake Growth Only', alpha=0.7)
+        axes[1, 2].plot(days, actual_apy, 'red', linewidth=3, label='Actual APY (Both Effects)')
+        axes[1, 2].set_xlabel('Days')
+        axes[1, 2].set_ylabel('APY (%)')
+        axes[1, 2].set_title(f'{title_prefix}APY Decay Components\n(Emission Decay vs Stake Growth)')
+        axes[1, 2].legend()
+        axes[1, 2].grid(True, alpha=0.3)
+        
+        # Plot 7: Total Rewards Distribution Over Time
+        # Show cumulative rewards and how they're distributed
+        cumulative_emission = np.cumsum(emission_daily)
+        cumulative_rewards_to_stakers = np.cumsum(emission_daily)  # All emission goes to stakers
+        
+        axes[2, 0].plot(days, cumulative_emission / 1e6, 'green', linewidth=2, label='Total Emission')
+        axes[2, 0].plot(days, cumulative_rewards_to_stakers / 1e6, 'blue', linewidth=2, label='Rewards to Stakers')
+        axes[2, 0].set_xlabel('Days')
+        axes[2, 0].set_ylabel('Cumulative Tokens (M)')
+        axes[2, 0].set_title(f'{title_prefix}Cumulative Rewards Distribution\n(All Emission Goes to Stakers)')
+        axes[2, 0].legend()
+        axes[2, 0].grid(True, alpha=0.3)
+        
+        # Plot 8: APY Incentive Mechanism
+        # Show how high initial APY attracts participants
+        stake_growth_rate = np.gradient(weighted_stake) / weighted_stake * 100  # Daily growth rate in %
+        
+        # Create a dual-axis plot
+        ax1 = axes[2, 1]
+        ax2 = ax1.twinx()
+        
+        # Plot APY on left axis
+        line1 = ax1.plot(days, base_apy, 'red', linewidth=2, label='APY (%)')
+        ax1.set_xlabel('Days')
+        ax1.set_ylabel('APY (%)', color='red')
+        ax1.tick_params(axis='y', labelcolor='red')
+        
+        # Plot stake growth rate on right axis
+        line2 = ax2.plot(days, stake_growth_rate, 'blue', linewidth=2, label='Stake Growth Rate (%/day)')
+        ax2.set_ylabel('Stake Growth Rate (%/day)', color='blue')
+        ax2.tick_params(axis='y', labelcolor='blue')
+        
+        ax1.set_title(f'{title_prefix}APY Incentive Mechanism\n(High APY → More Participation)')
+        ax1.grid(True, alpha=0.3)
+        
+        # Combine legends
+        lines = line1 + line2
+        labels = [l.get_label() for l in lines]
+        ax1.legend(lines, labels, loc='upper right')
+        
+        # Add annotation for the incentive mechanism
+        ax1.annotate('High APY attracts\nmore participants', 
+                    xy=(days[30], base_apy[30]),
+                    xytext=(days[30] + 50, base_apy[30] + 100),
+                    arrowprops=dict(arrowstyle='->', color='green'),
+                    fontsize=10, color='green',
+                    bbox=dict(boxstyle="round,pad=0.3", facecolor="lightgreen", alpha=0.7))
+        
+        plt.tight_layout()
+        plt.show()
+        
+        return fig
+
 # Example usage
 if __name__ == "__main__":
     params = SimulationParams(
@@ -979,17 +1181,21 @@ if __name__ == "__main__":
     print("- 1-Year: 1 year lock-up (illiquidity cost applied)")  
     print("- 2-Year: 2 year lock-up (illiquidity cost applied)")
     
-    # print("\n" + "="*80)
-    # print("OPTION 2 OSCILLATION ANALYSIS")
-    # print("="*80)
-    
-    # Analyze oscillations in Option 2
-    # opt2_changes = df['opt2_stake_change'].dropna()
-    # print(f"Option 2 stake changes - Mean: {opt2_changes.mean():.2f}, Std: {opt2_changes.std():.2f}")
-    # print(f"Number of positive changes: {(opt2_changes > 0).sum()}")
-    # print(f"Number of negative changes: {(opt2_changes < 0).sum()}")
-    # print(f"Largest increase: {opt2_changes.max():.2f}")
-    # print(f"Largest decrease: {opt2_changes.min():.2f}")
-    
     # Plot results
     sim.plot_results(results, "Titan DPoS Simulation: ")
+    
+    # Plot Option 2 explanation
+    print("\n" + "="*80)
+    print("OPTION 2 APY EXPLANATION PLOTS")
+    print("="*80)
+    print("The following plots explain why Option 2 initial APY is so high:")
+    print("- Plot 1: Shows the relationship between emission and total stake")
+    print("- Plot 2: Shows the inverse relationship between APY and participation")
+    print("- Plot 3: Shows daily rewards per staked token (individual perspective)")
+    print("- Plot 4: Confirms these are individual participant APYs")
+    print("- Plot 5: Compares early vs late participant APYs")
+    print("- Plot 6: Breaks down APY decay into emission vs stake effects")
+    print("- Plot 7: Shows total rewards distribution")
+    print("- Plot 8: Shows the incentive mechanism (high APY → more participation)")
+    
+    sim.plot_option2_explanation(results['option2'], "Option 2 APY Explanation: ")
